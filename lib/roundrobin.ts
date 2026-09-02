@@ -184,3 +184,35 @@ export function computeUpNext(rr: RoundRobinState, limit = 100): QueueItem[] {
   }
   return out;
 }
+
+/** An upcoming item tagged with the round-robin round it belongs to. */
+export type ScheduledItem = QueueItem & {
+  /** null = host "play next" pin (jumps rounds); otherwise 1-based upcoming round. */
+  round: number | null;
+};
+
+/**
+ * Upcoming play order with each item tagged by its round (decision #23 surfacing).
+ * Pinned items get round=null; round-robin items get 1-based rounds counting from
+ * the next upcoming round, so the UI can group "Round 1 / Round 2 / ...".
+ */
+export function computeSchedule(rr: RoundRobinState, limit = 100): ScheduledItem[] {
+  const sim = cloneRR(rr);
+  const pinnedSet = new Set(rr.pinned);
+  const baseRound = sim.currentRound;
+  const out: ScheduledItem[] = [];
+  for (let i = 0; i < limit; i++) {
+    const item = pickNext(sim);
+    if (!item) break;
+    const round = pinnedSet.has(item.id) ? null : sim.currentRound - baseRound + 1;
+    out.push({ ...item, round });
+  }
+  // Normalize so the earliest round-robin round is always 1 (the current round
+  // may already be partly consumed by the now-playing song).
+  const rounds = out.filter((o) => o.round != null).map((o) => o.round as number);
+  if (rounds.length) {
+    const min = Math.min(...rounds);
+    for (const o of out) if (o.round != null) o.round = o.round - min + 1;
+  }
+  return out;
+}

@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { DotsSixVertical, CaretDoubleUp, Trash, X, PushPin } from "@phosphor-icons/react";
-import type { QueueItem } from "@/lib/types";
+import type { ScheduledItem } from "@/lib/roundrobin";
 import { Cover } from "./ui";
 
 type Props = {
-  upNext: QueueItem[];
+  upNext: ScheduledItem[];
   pinnedIds: string[];
   onPinNext: (id: string) => void;
   onUnpin: (id: string) => void;
@@ -14,11 +14,25 @@ type Props = {
   onRemove: (id: string) => void;
 };
 
+// Group consecutive auto items by their round, preserving order.
+function groupByRound(items: ScheduledItem[]): { round: number; items: ScheduledItem[] }[] {
+  const groups: { round: number; items: ScheduledItem[] }[] = [];
+  for (const it of items) {
+    const r = it.round ?? 1;
+    const last = groups[groups.length - 1];
+    if (last && last.round === r) last.items.push(it);
+    else groups.push({ round: r, items: [it] });
+  }
+  return groups;
+}
+
 export function HostQueue({ upNext, pinnedIds, onPinNext, onUnpin, onReorderPinned, onRemove }: Props) {
   const pinnedSet = new Set(pinnedIds);
   const byId = new Map(upNext.map((q) => [q.id, q]));
-  const pinned = pinnedIds.map((id) => byId.get(id)).filter(Boolean) as QueueItem[];
+  const pinned = pinnedIds.map((id) => byId.get(id)).filter(Boolean) as ScheduledItem[];
   const auto = upNext.filter((q) => !pinnedSet.has(q.id));
+  const rounds = groupByRound(auto);
+  const multiRound = rounds.length > 1;
 
   // drag state for the pinned lane
   const [dragId, setDragId] = useState<string | null>(null);
@@ -114,23 +128,24 @@ export function HostQueue({ upNext, pinnedIds, onPinNext, onUnpin, onReorderPinn
         </div>
       )}
 
-      {/* Auto round-robin list */}
-      {auto.length > 0 && (
-        <>
-          {pinned.length > 0 && (
-            <div className="mb-1.5 px-1.5 text-[0.7rem] font-semibold uppercase tracking-wider text-[var(--color-faint)]">
-              Then, in fair rotation
-            </div>
-          )}
+      {/* Auto round-robin list, grouped by round */}
+      {rounds.map((group) => (
+        <div key={group.round} className="mb-1 last:mb-0">
+          <div className="mb-1 flex items-center gap-2 px-1.5">
+            <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+              Round {group.round}
+            </span>
+            {group.round === 1 && multiRound && (
+              <span className="text-[0.7rem] text-[var(--color-faint)]">one turn each</span>
+            )}
+            <span className="h-px flex-1 bg-[var(--color-line)]" />
+          </div>
           <ol className="flex flex-col">
-            {auto.map((q, i) => (
+            {group.items.map((q) => (
               <li
                 key={q.id}
                 className="group flex items-center gap-2.5 rounded-lg px-1.5 py-2 transition hover:bg-[var(--color-panel-2)]"
               >
-                <span className="w-5 text-center text-sm tabular-nums text-[var(--color-faint)]">
-                  {i + 1}
-                </span>
                 <Cover src={q.cover} alt={q.title} size={38} />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{q.title}</p>
@@ -158,8 +173,8 @@ export function HostQueue({ upNext, pinnedIds, onPinNext, onUnpin, onReorderPinn
               </li>
             ))}
           </ol>
-        </>
-      )}
+        </div>
+      ))}
     </div>
   );
 }

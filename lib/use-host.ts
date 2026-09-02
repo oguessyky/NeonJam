@@ -13,7 +13,8 @@ import {
   removeContributor,
   findByVideoId,
   pickNext,
-  computeUpNext,
+  computeSchedule,
+  type ScheduledItem,
   pinNext,
   unpin,
   setPinnedOrder,
@@ -62,19 +63,21 @@ export type HostView = {
   radioEnabled: boolean;
   members: Member[];
   nowPlaying: NowPlaying | null;
-  upNext: QueueItem[];
+  upNext: ScheduledItem[];
   /** Ordered ids in the "play next" lane (decision #23) — a subset of upNext. */
   pinnedIds: string[];
   guestCount: number;
 };
 
-function nowVoters(track: Track, addedBy: string): QueueItem {
+function newItem(track: Track, addedBy: string): QueueItem {
   return {
     ...track,
     id: nanoid(10),
     addedBy,
     addedByName: addedBy === HOST_ID ? "Host" : addedBy,
-    voters: [addedBy],
+    // No auto self-vote — a song starts at 0 votes so the upvote control reads
+    // clearly (and doesn't pre-fill your own songs to "1").
+    voters: [],
     addedAt: Date.now(),
   };
 }
@@ -139,7 +142,7 @@ export function useHost() {
         isHost: m.isHost,
       })),
       nowPlaying: e.nowPlaying,
-      upNext: computeUpNext(e.rr, 60).map((q) => ({
+      upNext: computeSchedule(e.rr, 60).map((q) => ({
         id: q.id,
         videoId: q.videoId,
         title: q.title,
@@ -151,6 +154,7 @@ export function useHost() {
         voterIds: q.voters,
         isRadio: q.isRadio,
         isPinned: e.rr.pinned.includes(q.id),
+        round: q.round,
       })),
       rev: Date.now(),
     };
@@ -168,7 +172,7 @@ export function useHost() {
       radioEnabled: e.radioEnabled,
       members: [...e.members.values()],
       nowPlaying: e.nowPlaying,
-      upNext: computeUpNext(e.rr, 60),
+      upNext: computeSchedule(e.rr, 60),
       pinnedIds: [...e.rr.pinned],
       guestCount: [...e.members.values()].filter((m) => !m.isHost && m.connected).length,
     }));
@@ -215,7 +219,7 @@ export function useHost() {
         .filter(Boolean) as Track[];
       for (const t of tracks) {
         if (findByVideoId(e.rr, t.videoId)) continue;
-        const item = nowVoters(t, HOST_ID);
+        const item = newItem(t, HOST_ID);
         item.isRadio = true;
         addSong(e.rr, item);
       }
@@ -261,7 +265,7 @@ export function useHost() {
             toast(from, "info", "That's playing right now 🎶");
             return;
           }
-          const item = nowVoters(track, from);
+          const item = newItem(track, from);
           item.addedByName = name;
           addSong(e.rr, item);
           const wasIdle = !e.nowPlaying;
@@ -550,7 +554,7 @@ export function useHost() {
         const e = engineRef.current;
         if (!e) return;
         if (findByVideoId(e.rr, track.videoId) || e.nowPlaying?.videoId === track.videoId) return;
-        const item = nowVoters(track, HOST_ID);
+        const item = newItem(track, HOST_ID);
         addSong(e.rr, item);
         if (!e.nowPlaying) void advance();
         else sync();

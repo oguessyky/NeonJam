@@ -11,7 +11,9 @@ import {
   PencilSimple,
   WifiSlash,
   DoorOpen,
+  PushPin,
 } from "@phosphor-icons/react";
+import type { PublicQueueItem } from "@/lib/types";
 import { useGuest } from "@/lib/use-guest";
 import { Cover, ProgressBar, formatTime, EqBars } from "./ui";
 import { AddSong } from "./AddSong";
@@ -45,6 +47,9 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
   const state = view.state;
   const np = state?.nowPlaying ?? null;
   const pos = np && np.isPlaying ? np.positionSec + (Date.now() - np.anchorMs) / 1000 : np?.positionSec ?? 0;
+
+  // Group the queue into "Playing next" (pinned) + per-round sections.
+  const sections = groupSections(state?.upNext ?? []);
 
   const rename = () => {
     const n = prompt("Change your name", view.name)?.trim();
@@ -131,61 +136,102 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
       </div>
 
       {/* up next */}
-      <div className="flex items-center justify-between mb-2">
+      <div className="mb-1 flex items-center justify-between">
         <h2 className="font-semibold">Up next</h2>
         <span className="chip">{state?.upNext.length ?? 0}</span>
       </div>
-      <div className="flex flex-col gap-1.5">
-        {!state && <p className="text-sm text-[var(--color-faint)] py-6 text-center">Connecting…</p>}
+      {state && state.upNext.length > 0 && (
+        <p className="mb-3 text-xs text-[var(--color-faint)]">
+          Songs play one-per-person each round. Tap{" "}
+          <CaretUp size={11} weight="bold" className="inline align-[-1px] text-[var(--color-neon)]" /> to
+          upvote — the most-upvoted of someone&apos;s songs plays first in their turn.
+        </p>
+      )}
+      <div className="flex flex-col gap-4">
+        {!state && <p className="py-6 text-center text-sm text-[var(--color-faint)]">Connecting…</p>}
         {state && state.upNext.length === 0 && (
-          <p className="text-sm text-[var(--color-faint)] py-6 text-center">
+          <p className="py-6 text-center text-sm text-[var(--color-faint)]">
             Nothing queued. Be the first to add a song!
           </p>
         )}
-        {state?.upNext.map((q, i) => {
-          const youVoted = q.voterIds.includes(me);
-          const mine = q.addedBy === me;
-          return (
-            <div key={q.id} className="card !rounded-xl flex items-center gap-3 p-2.5">
-              <span className="w-4 text-center text-xs text-[var(--color-faint)] tabular-nums">{i + 1}</span>
-              <Cover src={q.cover} alt={q.title} size={44} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <p className="truncate text-sm font-medium">{q.title}</p>
-                  {q.isPinned && (
-                    <span className="shrink-0 rounded-full bg-[color-mix(in_srgb,var(--color-neon)_18%,transparent)] px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-[var(--color-neon)]">
-                      next
-                    </span>
-                  )}
-                </div>
-                <p className="truncate text-xs text-[var(--color-faint)]">
-                  {q.artist} · {q.isRadio ? "radio" : q.addedByName}
-                </p>
-              </div>
-              {mine && !q.isRadio && (
-                <button
-                  className="btn btn-ghost btn-icon !p-1.5 text-[var(--color-faint)]"
-                  onClick={() => actions.remove(q.id)}
-                  aria-label="Remove your song"
-                >
-                  <Trash size={15} />
-                </button>
+        {sections.map((sec) => (
+          <div key={sec.key}>
+            <div className="mb-1.5 flex items-center gap-2 px-0.5">
+              {sec.pinned ? (
+                <span className="flex items-center gap-1 text-[0.7rem] font-bold uppercase tracking-wider text-[var(--color-neon)]">
+                  <PushPin size={11} weight="fill" /> Playing next
+                </span>
+              ) : (
+                <span className="text-[0.7rem] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                  Round {sec.round}
+                </span>
               )}
-              <button
-                className={`flex flex-col items-center justify-center rounded-lg px-2.5 py-1 min-w-[2.6rem] border transition ${
-                  youVoted
-                    ? "border-[var(--color-neon)] text-[var(--color-neon)] bg-[color-mix(in_srgb,var(--color-neon)_12%,transparent)]"
-                    : "border-[var(--color-line)] text-[var(--color-muted)] hover:border-[var(--color-faint)]"
-                }`}
-                onClick={() => (youVoted ? actions.unvote(q.id) : actions.vote(q.id))}
-                aria-label="Upvote"
-              >
-                <CaretUp size={16} weight={youVoted ? "fill" : "bold"} />
-                <span className="text-xs font-semibold tabular-nums">{q.voterIds.length}</span>
-              </button>
+              <span className="h-px flex-1 bg-[var(--color-line)]" />
             </div>
-          );
-        })}
+            <div className="flex flex-col gap-1.5">
+              {sec.items.map((q) => {
+                const youVoted = q.voterIds.includes(me);
+                const mine = q.addedBy === me;
+                return (
+                  <div
+                    key={q.id}
+                    className="flex items-center gap-3 rounded-xl border p-2.5"
+                    style={
+                      mine
+                        ? {
+                            borderColor: "color-mix(in srgb, var(--color-neon-2) 45%, var(--color-line))",
+                            background: "color-mix(in srgb, var(--color-neon-2) 7%, var(--color-panel))",
+                          }
+                        : { borderColor: "var(--color-line)", background: "var(--color-panel)" }
+                    }
+                  >
+                    <Cover src={q.cover} alt={q.title} size={44} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <p className="truncate text-sm font-medium">{q.title}</p>
+                        {mine && (
+                          <span className="shrink-0 rounded-full bg-[color-mix(in_srgb,var(--color-neon-2)_22%,transparent)] px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-[var(--color-neon-2)]">
+                            you
+                          </span>
+                        )}
+                      </div>
+                      <p className="truncate text-xs text-[var(--color-faint)]">
+                        {q.artist} · {q.isRadio ? "radio" : q.addedByName}
+                      </p>
+                    </div>
+                    {mine && !q.isRadio && (
+                      <button
+                        className="btn btn-ghost btn-icon !p-1.5 text-[var(--color-faint)]"
+                        onClick={() => actions.remove(q.id)}
+                        aria-label="Remove your song"
+                        title="Remove your song"
+                      >
+                        <Trash size={15} />
+                      </button>
+                    )}
+                    {!q.isRadio && (
+                      <button
+                        className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
+                          youVoted
+                            ? "border-[var(--color-neon)] bg-[color-mix(in_srgb,var(--color-neon)_15%,transparent)] text-[var(--color-neon)]"
+                            : "border-[var(--color-line)] text-[var(--color-muted)] hover:border-[var(--color-neon)] hover:text-[var(--color-neon)]"
+                        }`}
+                        onClick={() => (youVoted ? actions.unvote(q.id) : actions.vote(q.id))}
+                        aria-pressed={youVoted}
+                        aria-label={youVoted ? "Remove your upvote" : "Upvote"}
+                      >
+                        <CaretUp size={15} weight={youVoted ? "fill" : "bold"} />
+                        <span className="tabular-nums">
+                          {youVoted && q.voterIds.length === 1 ? "Voted" : q.voterIds.length}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* add FAB */}
@@ -205,6 +251,21 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
       />
     </main>
   );
+}
+
+type Section = { key: string; pinned: boolean; round: number; items: PublicQueueItem[] };
+
+function groupSections(items: PublicQueueItem[]): Section[] {
+  const out: Section[] = [];
+  for (const q of items) {
+    const pinned = !!q.isPinned;
+    const round = q.round ?? 1;
+    const key = pinned ? "pinned" : `r${round}`;
+    const last = out[out.length - 1];
+    if (last && last.key === key) last.items.push(q);
+    else out.push({ key, pinned, round, items: [q] });
+  }
+  return out;
 }
 
 function Status({

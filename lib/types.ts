@@ -72,6 +72,8 @@ export type PublicQueueItem = {
   isRadio?: boolean;
   /** Host bumped this to "play next" (decision #23). */
   isPinned?: boolean;
+  /** Round-robin round (1-based) this song plays in; null when pinned. */
+  round: number | null;
 };
 
 export const ROOM_CAPACITY = 20; // decision #20
