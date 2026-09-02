@@ -121,23 +121,64 @@ export async function searchMusic(query: string, limit = 20): Promise<Track[]> {
   return out.slice(0, limit);
 }
 
-/** Resolve a single video id to a Track (URL-paste path, #4). */
-export async function resolveVideo(videoId: string): Promise<Track | null> {
-  const client = await yt();
+// A thumbnail that exists for every public video, no API needed.
+function fallbackThumb(videoId: string): string {
+  return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+}
+
+// YouTube oEmbed: a public, lightweight endpoint that reliably returns
+// title/author/thumbnail from any IP (unlike InnerTube's getBasicInfo, which is
+// sparse for some videos and rate-limited on datacenter IPs like Vercel).
+async function oEmbed(
+  videoId: string,
+): Promise<{ title: string; author: string; cover: string | null } | null> {
   try {
+    const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const d: any = await res.json();
+    if (!d?.title) return null;
+    return { title: d.title, author: d.author_name ?? "", cover: d.thumbnail_url ?? null };
+  } catch {
+    return null;
+  }
+}
+
+// InnerTube basic info — mainly for duration (oEmbed doesn't provide it).
+async function basicInfo(
+  videoId: string,
+): Promise<{ title: string | null; author: string; cover: string | null; durationSec: number | null } | null> {
+  try {
+    const client = await yt();
     const info: any = await client.getBasicInfo(videoId);
     const b = info?.basic_info ?? {};
-    if (!b?.id && !videoId) return null;
     return {
-      videoId,
-      title: b?.title ?? "Unknown",
-      artist: b?.author ?? "",
+      title: typeof b?.title === "string" && b.title ? b.title : null,
+      author: b?.author ?? "",
       cover: pickThumb(b?.thumbnail),
       durationSec: typeof b?.duration === "number" ? b.duration : null,
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve a single video id to a Track (URL-paste path, #4).
+ * oEmbed is the primary source (robust everywhere); InnerTube adds duration and
+ * acts as a title fallback. A thumbnail is always present via fallbackThumb.
+ */
+export async function resolveVideo(videoId: string): Promise<Track | null> {
+  const [o, b] = await Promise.all([oEmbed(videoId), basicInfo(videoId)]);
+  const title = o?.title ?? b?.title ?? null;
+  if (!title) return null; // genuinely couldn't identify the video
+  return {
+    videoId,
+    title,
+    artist: o?.author || b?.author || "",
+    cover: b?.cover || o?.cover || fallbackThumb(videoId),
+    durationSec: b?.durationSec ?? null,
+  };
 }
 
 /** Radio / autoplay filler for the empty queue (#10). Related tracks for a seed. */

@@ -9,7 +9,11 @@ export async function GET(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get("url") ?? req.nextUrl.searchParams.get("id") ?? "";
   const videoId = extractVideoId(raw);
   if (!videoId) return NextResponse.json({ error: "bad_url" }, { status: 400 });
-  const track = await resolveVideo(videoId);
-  if (!track) return NextResponse.json({ error: "not_found" }, { status: 404 });
-  return NextResponse.json({ track });
+  try {
+    const track = await resolveVideo(videoId);
+    if (!track) return NextResponse.json({ error: "not_found" }, { status: 404 });
+    return NextResponse.json({ track });
+  } catch {
+    return NextResponse.json({ error: "resolve_failed" }, { status: 502 });
+  }
 }
