@@ -141,11 +141,14 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
         <span className="chip">{state?.upNext.length ?? 0}</span>
       </div>
       {state && state.upNext.length > 0 && (
-        <p className="mb-3 text-xs text-[var(--color-faint)]">
-          Songs play one-per-person each round. Tap{" "}
-          <CaretUp size={11} weight="bold" className="inline align-[-1px] text-[var(--color-neon)]" /> to
-          upvote — the most-upvoted of someone&apos;s songs plays first in their turn.
-        </p>
+        <div className="mb-3 flex items-start gap-2 rounded-lg bg-[var(--color-ink-2)] px-3 py-2 text-xs text-[var(--color-muted)]">
+          <CaretUp size={14} weight="bold" className="mt-0.5 shrink-0 text-[var(--color-neon)]" />
+          <span>
+            <span className="font-semibold text-[var(--color-text)]">Upvote</span> a song to move it up
+            in its turn. Everyone&apos;s songs take turns one-per-round, and a person&apos;s most-upvoted
+            pick plays first when their turn comes.
+          </span>
+        </div>
       )}
       <div className="flex flex-col gap-4">
         {!state && <p className="py-6 text-center text-sm text-[var(--color-faint)]">Connecting…</p>}
