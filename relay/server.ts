@@ -1,0 +1,249 @@
+// NeonJam relay — a dumb WebSocket router (decision #5).
+//
+// It holds ONLY ephemeral routing state: which sockets belong to which room, and
+// a short host-reconnect grace timer. No queue, no votes, no persistence, no DB.
+// All authoritative state lives in the host browser.
+
+import { WebSocketServer, WebSocket } from "ws";
+import { customAlphabet } from "nanoid";
+import {
+  safeParse,
+  type ClientToRelay,
+  type RelayToClient,
+} from "../lib/protocol";
+import { ROOM_CAPACITY, HOST_RECONNECT_GRACE_MS } from "../lib/types";
+
+const PORT = Number(process.env.RELAY_PORT ?? 3061);
+
+// Unambiguous room codes (no 0/O/1/I).
+const makeCode = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 4);
+const makeToken = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 24);
+
+type GuestConn = { ws: WebSocket; name: string };
+
+type Room = {
+  code: string;
+  hostToken: string;
+  host: WebSocket | null;
+  hostGraceTimer: NodeJS.Timeout | null;
+  guests: Map<string, GuestConn>; // clientId -> conn
+  locked: boolean;
+};
+
+const rooms = new Map<string, Room>();
+
+// Per-socket metadata so we can clean up on close.
+type SockMeta =
+  | { role: "host"; code: string }
+  | { role: "guest"; code: string; clientId: string }
+  | { role: "pending" };
+const meta = new WeakMap<WebSocket, SockMeta>();
+const alive = new WeakMap<WebSocket, boolean>();
+
+function send(ws: WebSocket, msg: RelayToClient) {
+  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+function fanoutGuests(room: Room, msg: RelayToClient, only?: string) {
+  for (const [cid, g] of room.guests) {
+    if (only && cid !== only) continue;
+    send(g.ws, msg);
+  }
+}
+
+function newCode(): string {
+  let code = makeCode();
+  while (rooms.has(code)) code = makeCode();
+  return code;
+}
+
+function endRoom(room: Room, notify: boolean) {
+  if (notify) fanoutGuests(room, { t: "host_status", status: "ended" });
+  for (const [, g] of room.guests) {
+    try {
+      g.ws.close();
+    } catch {}
+  }
+  if (room.hostGraceTimer) clearTimeout(room.hostGraceTimer);
+  rooms.delete(room.code);
+  console.log(`[room ${room.code}] ended (guests notified=${notify})`);
+}
+
+// ---------------------------------------------------------------- server
+
+const wss = new WebSocketServer({ port: PORT });
+
+wss.on("listening", () => {
+  console.log(`NeonJam relay listening on ws://localhost:${PORT}`);
+});
+
+wss.on("connection", (ws) => {
+  meta.set(ws, { role: "pending" });
+  alive.set(ws, true);
+  ws.on("pong", () => alive.set(ws, true));
+
+  ws.on("message", (data) => {
+    const msg = safeParse(data.toString());
+    if (!msg) return send(ws, { t: "error", reason: "bad_message" });
+    handle(ws, msg as ClientToRelay);
+  });
+
+  ws.on("close", () => handleClose(ws));
+  ws.on("error", () => {});
+});
+
+function handle(ws: WebSocket, msg: ClientToRelay) {
+  switch (msg.t) {
+    case "host_create": {
+      const code = newCode();
+      const hostToken = makeToken();
+      const room: Room = {
+        code,
+        hostToken,
+        host: ws,
+        hostGraceTimer: null,
+        guests: new Map(),
+        locked: false,
+      };
+      rooms.set(code, room);
+      meta.set(ws, { role: "host", code });
+      send(ws, { t: "room_created", code, hostToken });
+      console.log(`[room ${code}] created`);
+      return;
+    }
+
+    case "host_reconnect": {
+      const room = rooms.get(msg.code);
+      if (!room || room.hostToken !== msg.hostToken) {
+        return send(ws, { t: "reconnect_fail", reason: "not_found" });
+      }
+      if (room.hostGraceTimer) {
+        clearTimeout(room.hostGraceTimer);
+        room.hostGraceTimer = null;
+      }
+      room.host = ws;
+      meta.set(ws, { role: "host", code: room.code });
+      send(ws, { t: "reconnect_ok", code: room.code });
+      // Re-tell the host who is currently connected so it can rebuild presence.
+      for (const [cid, g] of room.guests) {
+        send(ws, { t: "guest_joined", clientId: cid, name: g.name });
+      }
+      fanoutGuests(room, { t: "host_status", status: "connected" });
+      console.log(`[room ${room.code}] host reconnected`);
+      return;
+    }
+
+    case "guest_join": {
+      const room = rooms.get(msg.code);
+      if (!room) return send(ws, { t: "join_fail", reason: "not_found" });
+      const name = (msg.name ?? "").trim().slice(0, 32);
+      if (!name) return send(ws, { t: "join_fail", reason: "bad_name" });
+      const isReconnect = room.guests.has(msg.clientId);
+      if (!isReconnect) {
+        if (room.locked) return send(ws, { t: "join_fail", reason: "locked" });
+        if (room.guests.size >= ROOM_CAPACITY) {
+          return send(ws, { t: "join_fail", reason: "full" });
+        }
+      }
+      room.guests.set(msg.clientId, { ws, name });
+      meta.set(ws, { role: "guest", code: room.code, clientId: msg.clientId });
+      send(ws, { t: "join_ok", code: room.code });
+      // Host treats a repeat guest_joined for a known clientId as a reconnect.
+      if (room.host) send(room.host, { t: "guest_joined", clientId: msg.clientId, name });
+      console.log(`[room ${room.code}] guest ${isReconnect ? "re" : ""}joined: ${name}`);
+      return;
+    }
+
+    case "intent": {
+      const m = meta.get(ws);
+      if (!m || m.role !== "guest") return;
+      const room = rooms.get(m.code);
+      if (!room?.host) return; // host away (grace) — drop; host resyncs on return
+      const g = room.guests.get(m.clientId);
+      send(room.host, {
+        t: "guest_intent",
+        from: m.clientId,
+        name: g?.name ?? "?",
+        intent: msg.intent,
+      });
+      // keep relay's cached name in sync on rename
+      if (msg.intent.kind === "rename" && g) g.name = msg.intent.name;
+      return;
+    }
+
+    case "host_msg": {
+      const m = meta.get(ws);
+      if (!m || m.role !== "host") return;
+      const room = rooms.get(m.code);
+      if (!room) return;
+      fanoutGuests(room, { t: "host_msg", msg: msg.msg }, msg.to);
+      return;
+    }
+
+    case "host_action": {
+      const m = meta.get(ws);
+      if (!m || m.role !== "host") return;
+      const room = rooms.get(m.code);
+      if (!room) return;
+      if (msg.action.kind === "lock") {
+        room.locked = msg.action.locked;
+      } else if (msg.action.kind === "kick") {
+        const g = room.guests.get(msg.action.clientId);
+        if (g) {
+          send(g.ws, { t: "kicked" });
+          try {
+            g.ws.close();
+          } catch {}
+          room.guests.delete(msg.action.clientId);
+        }
+      } else if (msg.action.kind === "end") {
+        endRoom(room, true);
+      }
+      return;
+    }
+  }
+}
+
+function handleClose(ws: WebSocket) {
+  const m = meta.get(ws);
+  if (!m || m.role === "pending") return;
+  const room = rooms.get(m.code);
+  if (!room) return;
+
+  if (m.role === "host" && room.host === ws) {
+    room.host = null;
+    fanoutGuests(room, { t: "host_status", status: "disconnected" });
+    console.log(`[room ${room.code}] host dropped — ${HOST_RECONNECT_GRACE_MS}ms grace`);
+    room.hostGraceTimer = setTimeout(() => endRoom(room, true), HOST_RECONNECT_GRACE_MS);
+  } else if (m.role === "guest") {
+    const g = room.guests.get(m.clientId);
+    if (g && g.ws === ws) {
+      room.guests.delete(m.clientId);
+      if (room.host) send(room.host, { t: "guest_left", clientId: m.clientId });
+      console.log(`[room ${room.code}] guest left: ${m.clientId}`);
+    }
+  }
+}
+
+// Heartbeat: drop sockets that stop responding.
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (alive.get(ws) === false) {
+      try {
+        ws.terminate();
+      } catch {}
+      continue;
+    }
+    alive.set(ws, false);
+    try {
+      ws.ping();
+    } catch {}
+  }
+}, 30_000);
+
+wss.on("close", () => clearInterval(heartbeat));
+
+process.on("SIGINT", () => {
+  wss.close();
+  process.exit(0);
+});

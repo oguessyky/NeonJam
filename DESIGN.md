@@ -8,7 +8,11 @@ Sibling project to NeonWave (which *does* download/store via AssetHub). NeonJam
 deliberately does the opposite: pure media-player/remote-control, zero media bytes
 stored.
 
-## Status: DESIGN IN PROGRESS (grilling)
+## Status: BUILT — working vertical slice (all 22 decisions implemented)
+
+Verified end-to-end: host creates room (QR/code), guest joins + searches YouTube Music
+(InnerTube), adds songs, host plays via IFrame player with round-robin ordering, live
+synced now-playing + queue on the guest, host reconnect grace confirmed. See README.md.
 
 ---
 
