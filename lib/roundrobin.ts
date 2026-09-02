@@ -6,13 +6,14 @@
 // then the rest sorted by (round, add-time). Because rounds are immutable, adding
 // a song never reshuffles what's already queued.
 //
-// Round assignment at add-time, for a song by contributor C:
-//  - C already has pending songs  -> C's max pending round + 1 (C's own next turn).
-//  - C is fresh (new, or ran out)  -> playingRound + 1, i.e. the round right after
-//    the one currently playing (the "next round"). Songs added before anything has
-//    played share round 1.
-// So a new song joins the NEXT round to play (appended after songs already in it,
-// FIFO by add-time) and never lands in the currently-playing round or cuts ahead.
+// Round assignment at add-time, for a song by contributor C (decision #24):
+//   round = max(C's previous round + 1, playingRound)
+// i.e. a song's round is that CONTRIBUTOR'S own song number: their 1st song is
+// round 1, 2nd is round 2, and so on. So round N holds everyone's Nth song, and a
+// person's extra song always goes to their NEXT round (never the current one).
+// The `max(..., playingRound)` clamp only matters for someone who joins late: their
+// 1st song slots into the round currently playing instead of a round that's gone.
+// Within a round, order is FIFO by add-time.
 //
 // Votes are just likes now (decision #24) — they do NOT affect order.
 
@@ -23,33 +24,30 @@ export type RoundRobinState = {
   pending: QueueItem[];
   /** Round of the song currently playing; 0 before anything has played. */
   playingRound: number;
+  /** Per-contributor: the round of their most recently added song (cumulative). */
+  lastRound: Record<string, number>;
   /** Host "play next" override lane (#23): ordered queue-item ids that jump ahead. */
   pinned: string[];
 };
 
 export function createRoundRobin(): RoundRobinState {
-  return { pending: [], playingRound: 0, pinned: [] };
+  return { pending: [], playingRound: 0, lastRound: {}, pinned: [] };
 }
 
 function roundOf(item: QueueItem): number {
   return item.roundNo ?? 1;
 }
 
-/** Assign the immutable round for a new song by `clientId` (decision #24). */
+/**
+ * Assign the immutable round for a new song by `clientId` (decision #24):
+ * that contributor's own next song number, clamped to at least the current round
+ * so late joiners slot into the round playing now rather than one that's gone.
+ */
 function assignRound(rr: RoundRobinState, clientId: string): number {
-  let myMax = 0;
-  let hasMine = false;
-  for (const p of rr.pending) {
-    if (p.addedBy === clientId) {
-      hasMine = true;
-      const r = roundOf(p);
-      if (r > myMax) myMax = r;
-    }
-  }
-  // Own next turn, or (fresh contributor) the round right after the one currently
-  // playing — the "next round". Before anything plays, playingRound is 0 -> round 1,
-  // so early joiners all share round 1.
-  return hasMine ? myMax + 1 : rr.playingRound + 1;
+  const prev = rr.lastRound[clientId] ?? 0;
+  const round = Math.max(prev + 1, rr.playingRound);
+  rr.lastRound[clientId] = round;
+  return round;
 }
 
 /** Add a song to the queue, stamping its immutable round. */
@@ -71,6 +69,7 @@ export function removeContributor(rr: RoundRobinState, clientId: string): void {
   const dropped = new Set(rr.pending.filter((p) => p.addedBy === clientId).map((p) => p.id));
   rr.pending = rr.pending.filter((p) => p.addedBy !== clientId);
   rr.pinned = rr.pinned.filter((id) => !dropped.has(id));
+  delete rr.lastRound[clientId];
 }
 
 /** Find a pending entry by videoId (duplicate detection, decision #11). */

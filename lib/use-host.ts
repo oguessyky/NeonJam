@@ -47,6 +47,7 @@ type Snapshot = {
   rr: {
     pending: QueueItem[];
     playingRound: number;
+    lastRound: Record<string, number>;
     pinned: string[];
   };
   savedAt: number;
@@ -112,6 +113,7 @@ export function useHost() {
       rr: {
         pending: e.rr.pending,
         playingRound: e.rr.playingRound,
+        lastRound: e.rr.lastRound,
         pinned: e.rr.pinned,
       },
       savedAt: Date.now(),
@@ -357,6 +359,7 @@ export function useHost() {
             const rr = createRoundRobin();
             rr.pending = s.rr.pending;
             rr.playingRound = s.rr.playingRound ?? 0;
+            rr.lastRound = s.rr.lastRound ?? {};
             rr.pinned = s.rr.pinned ?? [];
             engineRef.current = {
               code: s.code,

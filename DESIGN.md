@@ -112,14 +112,16 @@ synced now-playing + queue on the guest, host reconnect grace confirmed. See REA
 ### 24. Round-robin rewrite → FIFO-fair, immutable per-song rounds (supersedes votes-in-#9)
 Fixes two reported bugs: order was by contributor-join not FIFO, and adding a song reshuffled
 the already-queued order / could slip into the current round.
-- **Immutable round per song, assigned at add-time** (never recomputed → no reshuffling):
-  - contributor who already has pending songs → new song = their max pending round + 1.
-  - fresh contributor (new or ran out) → `playingRound + 1` = the round right after the one
-    currently playing (the "next round"). Before anything plays, round 1, so early joiners
-    share round 1.
-- **Within a round: FIFO** by add-time (decision: song order, not join order).
-- **A new song joins the NEXT round to play** (appended after songs already in it) — never the
-  currently-playing round, never cutting ahead. (Corrected from an earlier mislabeled option.)
+- **Round = the contributor's own song number** (per-person index), assigned immutably at
+  add-time: `round = max(their previous round + 1, playingRound)`.
+  - So round N holds everyone's Nth song; a person's 1st song is round 1, 2nd is round 2, etc.
+  - A person's extra song always goes to THEIR next round, never the current one (fixes the
+    reported bug where a 2nd song sat in round 1 with others' 1st songs).
+  - The `playingRound` clamp only affects a late joiner: their 1st song slots into the round
+    playing now, not a round that already finished.
+- **Within a round: FIFO** by add-time (song order, not contributor-join order).
+- (Earlier attempts used contributor-join order, then a mislabeled "playingRound+1 for fresh"
+  rule; both were wrong. Per-person index is the correct model.)
 - **Votes are now just LIKES** — a popularity count only, they do NOT change play order. Reframe
   the control as a like; play order is purely (round, add-time). Supersedes the vote-ranking in #9.
 - Play order = pinned lane (#23) first, then non-pinned sorted by (round, add-time).
