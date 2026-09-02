@@ -115,8 +115,8 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
         <div className="flex items-center gap-3">
           <Cover src={np?.cover} alt={np?.title ?? ""} size={64} />
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <p className="truncate font-semibold">{np?.title ?? "Nothing yet"}</p>
+            <div className="flex min-w-0 items-center gap-2">
+              <p className="min-w-0 truncate font-semibold">{np?.title ?? "Nothing yet"}</p>
               {np?.isPlaying && <EqBars />}
             </div>
             <p className="truncate text-sm text-[var(--color-faint)]">
@@ -190,8 +190,8 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
                   >
                     <Cover src={q.cover} alt={q.title} size={44} />
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <p className="truncate text-sm font-medium">{q.title}</p>
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <p className="min-w-0 truncate text-sm font-medium">{q.title}</p>
                         {mine && (
                           <span className="shrink-0 rounded-full bg-[color-mix(in_srgb,var(--color-neon-2)_22%,transparent)] px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-[var(--color-neon-2)]">
                             you
