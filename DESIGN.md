@@ -114,11 +114,12 @@ Fixes two reported bugs: order was by contributor-join not FIFO, and adding a so
 the already-queued order / could slip into the current round.
 - **Immutable round per song, assigned at add-time** (never recomputed → no reshuffling):
   - contributor who already has pending songs → new song = their max pending round + 1.
-  - fresh contributor (new or ran out) → the round AFTER the about-to-play round
-    (`min pending round + 1`; if queue empty, `playingRound + 1`; at start, round 1).
+  - fresh contributor (new or ran out) → `playingRound + 1` = the round right after the one
+    currently playing (the "next round"). Before anything plays, round 1, so early joiners
+    share round 1.
 - **Within a round: FIFO** by add-time (decision: song order, not join order).
-- **Newcomers join the round after the imminent one** (strictest choice) — never touch the
-  about-to-play round, never cut ahead of queued songs.
+- **A new song joins the NEXT round to play** (appended after songs already in it) — never the
+  currently-playing round, never cutting ahead. (Corrected from an earlier mislabeled option.)
 - **Votes are now just LIKES** — a popularity count only, they do NOT change play order. Reframe
   the control as a like; play order is purely (round, add-time). Supersedes the vote-ranking in #9.
 - Play order = pinned lane (#23) first, then non-pinned sorted by (round, add-time).

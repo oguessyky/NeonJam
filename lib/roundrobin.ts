@@ -8,11 +8,11 @@
 //
 // Round assignment at add-time, for a song by contributor C:
 //  - C already has pending songs  -> C's max pending round + 1 (C's own next turn).
-//  - C is fresh (new, or ran out)  -> the round AFTER the about-to-play round, i.e.
-//    (min pending round + 1); if the queue is empty, playingRound + 1; at the very
-//    start (nothing has played), round 1.
-// This means a newcomer never lands in the imminent round and never cuts ahead of
-// queued songs; within a round, order is FIFO by add-time.
+//  - C is fresh (new, or ran out)  -> playingRound + 1, i.e. the round right after
+//    the one currently playing (the "next round"). Songs added before anything has
+//    played share round 1.
+// So a new song joins the NEXT round to play (appended after songs already in it,
+// FIFO by add-time) and never lands in the currently-playing round or cuts ahead.
 //
 // Votes are just likes now (decision #24) — they do NOT affect order.
 
@@ -39,18 +39,17 @@ function roundOf(item: QueueItem): number {
 function assignRound(rr: RoundRobinState, clientId: string): number {
   let myMax = 0;
   let hasMine = false;
-  let minPending = Infinity;
   for (const p of rr.pending) {
-    const r = roundOf(p);
     if (p.addedBy === clientId) {
       hasMine = true;
+      const r = roundOf(p);
       if (r > myMax) myMax = r;
     }
-    if (r < minPending) minPending = r;
   }
-  if (hasMine) return myMax + 1; // my own next turn
-  if (minPending === Infinity) return rr.playingRound + 1; // queue empty (>=1)
-  return minPending + 1; // fresh contributor -> round after the about-to-play round
+  // Own next turn, or (fresh contributor) the round right after the one currently
+  // playing — the "next round". Before anything plays, playingRound is 0 -> round 1,
+  // so early joiners all share round 1.
+  return hasMine ? myMax + 1 : rr.playingRound + 1;
 }
 
 /** Add a song to the queue, stamping its immutable round. */
