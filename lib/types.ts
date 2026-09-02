@@ -70,6 +70,8 @@ export type PublicQueueItem = {
   addedByName: string;
   voterIds: string[];
   isRadio?: boolean;
+  /** Host bumped this to "play next" (decision #23). */
+  isPinned?: boolean;
 };
 
 export const ROOM_CAPACITY = 20; // decision #20

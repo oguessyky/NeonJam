@@ -14,6 +14,9 @@ import {
   findByVideoId,
   pickNext,
   computeUpNext,
+  pinNext,
+  unpin,
+  setPinnedOrder,
   type RoundRobinState,
 } from "./roundrobin";
 import type { NowPlaying, PublicState, Track, QueueItem, Member } from "./types";
@@ -46,6 +49,7 @@ type Snapshot = {
     servedThisRound: string[];
     joinedRound: [string, number][];
     pending: QueueItem[];
+    pinned: string[];
   };
   savedAt: number;
 };
@@ -59,6 +63,8 @@ export type HostView = {
   members: Member[];
   nowPlaying: NowPlaying | null;
   upNext: QueueItem[];
+  /** Ordered ids in the "play next" lane (decision #23) — a subset of upNext. */
+  pinnedIds: string[];
   guestCount: number;
 };
 
@@ -83,6 +89,7 @@ export function useHost() {
     members: [],
     nowPlaying: null,
     upNext: [],
+    pinnedIds: [],
     guestCount: 0,
   });
 
@@ -108,6 +115,7 @@ export function useHost() {
         servedThisRound: [...e.rr.servedThisRound],
         joinedRound: [...e.rr.joinedRound.entries()],
         pending: e.rr.pending,
+        pinned: e.rr.pinned,
       },
       savedAt: Date.now(),
     };
@@ -142,6 +150,7 @@ export function useHost() {
         addedByName: q.addedByName,
         voterIds: q.voters,
         isRadio: q.isRadio,
+        isPinned: e.rr.pinned.includes(q.id),
       })),
       rev: Date.now(),
     };
@@ -160,6 +169,7 @@ export function useHost() {
       members: [...e.members.values()],
       nowPlaying: e.nowPlaying,
       upNext: computeUpNext(e.rr, 60),
+      pinnedIds: [...e.rr.pinned],
       guestCount: [...e.members.values()].filter((m) => !m.isHost && m.connected).length,
     }));
     saveSnapshot();
@@ -352,6 +362,7 @@ export function useHost() {
             rr.servedThisRound = new Set(s.rr.servedThisRound);
             rr.joinedRound = new Map(s.rr.joinedRound);
             rr.pending = s.rr.pending;
+            rr.pinned = s.rr.pinned ?? [];
             engineRef.current = {
               code: s.code,
               hostToken: s.hostToken,
@@ -503,6 +514,33 @@ export function useHost() {
         const e = engineRef.current;
         if (!e) return;
         removeSong(e.rr, itemId);
+        sync();
+      },
+      [sync],
+    ),
+    pinNext: useCallback(
+      (itemId: string) => {
+        const e = engineRef.current;
+        if (!e) return;
+        pinNext(e.rr, itemId);
+        sync();
+      },
+      [sync],
+    ),
+    unpin: useCallback(
+      (itemId: string) => {
+        const e = engineRef.current;
+        if (!e) return;
+        unpin(e.rr, itemId);
+        sync();
+      },
+      [sync],
+    ),
+    reorderPinned: useCallback(
+      (orderedIds: string[]) => {
+        const e = engineRef.current;
+        if (!e) return;
+        setPinnedOrder(e.rr, orderedIds);
         sync();
       },
       [sync],

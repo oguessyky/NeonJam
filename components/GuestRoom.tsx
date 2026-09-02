@@ -150,7 +150,14 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
               <span className="w-4 text-center text-xs text-[var(--color-faint)] tabular-nums">{i + 1}</span>
               <Cover src={q.cover} alt={q.title} size={44} />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{q.title}</p>
+                <div className="flex items-center gap-1.5">
+                  <p className="truncate text-sm font-medium">{q.title}</p>
+                  {q.isPinned && (
+                    <span className="shrink-0 rounded-full bg-[color-mix(in_srgb,var(--color-neon)_18%,transparent)] px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-[var(--color-neon)]">
+                      next
+                    </span>
+                  )}
+                </div>
                 <p className="truncate text-xs text-[var(--color-faint)]">
                   {q.artist} · {q.isRadio ? "radio" : q.addedByName}
                 </p>

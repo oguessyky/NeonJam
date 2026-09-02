@@ -100,6 +100,15 @@ synced now-playing + queue on the guest, host reconnect grace confirmed. See REA
 
 ---
 
+### 23. Host reorder → "PLAY NEXT" bump lane over round-robin (not free-form manual)
+- Round-robin stays the always-on engine (#9). The host does NOT get a free-form manual order.
+- Host can **bump** any queued song to "play next"; bumps form an ordered **pinned lane** the host can
+  **drag to reorder** and un-pin. Guests can't bump (host-only DJ, #8); they see the resulting order.
+- Implementation: `pinned: itemId[]` override. `pickNext` drains still-pending pinned ids first (pure
+  override — does NOT touch round-robin's served/round bookkeeping), then falls back to round-robin.
+- UI: host queue shows a "Playing next" (pinned, draggable) zone above the "Then (auto)" round-robin
+  list; auto rows carry a "↑ play next" control that pins them. Built with the design skill for UX.
+
 ## Primary user journey (resolved model)
 
 1. **Host** opens NeonJam on a laptop at the speakers → gets a room with a **QR + short code**;

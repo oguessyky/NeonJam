@@ -22,6 +22,12 @@ export type RoundRobinState = {
   joinedRound: Map<string, number>;
   /** All pending songs (flat). Grouped by `addedBy` on demand. */
   pending: QueueItem[];
+  /**
+   * Host "play next" override lane (decision #23): ordered queue-item ids that
+   * jump ahead of the round-robin. A PURE override — draining a pin does NOT
+   * touch the round/served bookkeeping, so fairness underneath is undisturbed.
+   */
+  pinned: string[];
 };
 
 export function createRoundRobin(): RoundRobinState {
@@ -31,7 +37,26 @@ export function createRoundRobin(): RoundRobinState {
     servedThisRound: new Set(),
     joinedRound: new Map(),
     pending: [],
+    pinned: [],
   };
+}
+
+/** Host bumps an item to play next — front of the pinned lane (decision #23). */
+export function pinNext(rr: RoundRobinState, itemId: string): void {
+  if (!rr.pending.some((p) => p.id === itemId)) return;
+  rr.pinned = [itemId, ...rr.pinned.filter((id) => id !== itemId)];
+}
+
+export function unpin(rr: RoundRobinState, itemId: string): void {
+  rr.pinned = rr.pinned.filter((id) => id !== itemId);
+}
+
+/** Replace the pinned lane order (host drag-reorder). Drops stale ids. */
+export function setPinnedOrder(rr: RoundRobinState, order: string[]): void {
+  const seen = new Set<string>();
+  rr.pinned = order.filter(
+    (id) => rr.pending.some((p) => p.id === id) && !seen.has(id) && seen.add(id),
+  );
 }
 
 function pendingCountFor(rr: RoundRobinState, clientId: string): number {
@@ -81,12 +106,15 @@ export function addSong(rr: RoundRobinState, item: QueueItem): void {
 export function removeSong(rr: RoundRobinState, itemId: string): QueueItem | undefined {
   const idx = rr.pending.findIndex((p) => p.id === itemId);
   if (idx === -1) return undefined;
+  unpin(rr, itemId);
   return rr.pending.splice(idx, 1)[0];
 }
 
 /** Remove every pending song from a contributor (kick / host-drop). */
 export function removeContributor(rr: RoundRobinState, clientId: string): void {
+  const dropped = new Set(rr.pending.filter((p) => p.addedBy === clientId).map((p) => p.id));
   rr.pending = rr.pending.filter((p) => p.addedBy !== clientId);
+  rr.pinned = rr.pinned.filter((id) => !dropped.has(id));
   rr.rotation = rr.rotation.filter((c) => c !== clientId);
   rr.joinedRound.delete(clientId);
   rr.servedThisRound.delete(clientId);
@@ -104,6 +132,13 @@ export function findByVideoId(rr: RoundRobinState, videoId: string): QueueItem |
  * Returns undefined only when there are no pending songs at all.
  */
 export function pickNext(rr: RoundRobinState): QueueItem | undefined {
+  // Host "play next" pins jump the line first (decision #23) — a pure override
+  // that leaves round/served bookkeeping untouched. Skip stale pins.
+  while (rr.pinned.length) {
+    const id = rr.pinned.shift()!;
+    const idx = rr.pending.findIndex((p) => p.id === id);
+    if (idx !== -1) return rr.pending.splice(idx, 1)[0];
+  }
   // At most two passes: current round, then (if spent) the next round.
   for (let pass = 0; pass < 2; pass++) {
     for (const cid of rr.rotation) {
@@ -131,6 +166,7 @@ function cloneRR(rr: RoundRobinState): RoundRobinState {
     servedThisRound: new Set(rr.servedThisRound),
     joinedRound: new Map(rr.joinedRound),
     pending: rr.pending.map((p) => ({ ...p, voters: [...p.voters] })),
+    pinned: [...rr.pinned],
   };
 }
 

@@ -21,6 +21,7 @@ import {
 } from "@phosphor-icons/react";
 import { useHost } from "@/lib/use-host";
 import { Cover, ProgressBar, formatTime, EqBars } from "@/components/ui";
+import { HostQueue } from "@/components/HostQueue";
 import type { Member } from "@/lib/types";
 
 export default function HostPage() {
@@ -148,8 +149,15 @@ export default function HostPage() {
             </div>
           </div>
 
-          {/* Up next */}
-          <QueueSection view={view} onRemove={controls.removeAny} />
+          {/* Queue: pinned "play next" lane + auto round-robin */}
+          <HostQueue
+            upNext={view.upNext}
+            pinnedIds={view.pinnedIds}
+            onPinNext={controls.pinNext}
+            onUnpin={controls.unpin}
+            onReorderPinned={controls.reorderPinned}
+            onRemove={controls.removeAny}
+          />
         </section>
 
         {/* RIGHT: join + members + settings */}
@@ -219,53 +227,6 @@ export default function HostPage() {
         </aside>
       </div>
     </main>
-  );
-}
-
-function QueueSection({
-  view,
-  onRemove,
-}: {
-  view: ReturnType<typeof useHost>["view"];
-  onRemove: (id: string) => void;
-}) {
-  return (
-    <div className="card p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold">Up next</h3>
-        <span className="chip">{view.upNext.length}</span>
-      </div>
-      {view.upNext.length === 0 ? (
-        <p className="text-sm text-[var(--color-faint)] py-4 text-center">
-          Queue is empty — {view.radioEnabled ? "radio will keep things going." : "add a song."}
-        </p>
-      ) : (
-        <ol className="flex flex-col gap-1">
-          {view.upNext.map((q, i) => (
-            <li key={q.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-[var(--color-panel-2)] transition group">
-              <span className="w-5 text-center text-sm text-[var(--color-faint)] tabular-nums">{i + 1}</span>
-              <Cover src={q.cover} alt={q.title} size={40} />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{q.title}</p>
-                <p className="truncate text-xs text-[var(--color-faint)]">
-                  {q.artist} · {q.isRadio ? "radio" : q.addedByName}
-                </p>
-              </div>
-              {q.voters.length > 0 && (
-                <span className="chip">▲ {q.voters.length}</span>
-              )}
-              <button
-                className="btn btn-ghost btn-icon opacity-0 group-hover:opacity-100 transition"
-                onClick={() => onRemove(q.id)}
-                aria-label="Remove"
-              >
-                <Trash size={16} />
-              </button>
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
   );
 }
 
