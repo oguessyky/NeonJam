@@ -107,8 +107,8 @@ export default function HostPage() {
               <div className="flex items-center gap-3 mb-3">
                 <Cover src={np?.cover} alt={np?.title ?? ""} size={52} />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate font-semibold">{np?.title ?? "Nothing playing"}</p>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="min-w-0 truncate font-semibold">{np?.title ?? "Nothing playing"}</p>
                     {np?.isRadio && <span className="chip !text-[var(--color-neon-2)]">radio</span>}
                   </div>
                   <p className="truncate text-sm text-[var(--color-faint)]">
