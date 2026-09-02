@@ -45,11 +45,8 @@ type Snapshot = {
   locked: boolean;
   nowPlaying: NowPlaying | null;
   rr: {
-    rotation: string[];
-    currentRound: number;
-    servedThisRound: string[];
-    joinedRound: [string, number][];
     pending: QueueItem[];
+    playingRound: number;
     pinned: string[];
   };
   savedAt: number;
@@ -113,11 +110,8 @@ export function useHost() {
       locked: e.locked,
       nowPlaying: e.nowPlaying,
       rr: {
-        rotation: e.rr.rotation,
-        currentRound: e.rr.currentRound,
-        servedThisRound: [...e.rr.servedThisRound],
-        joinedRound: [...e.rr.joinedRound.entries()],
         pending: e.rr.pending,
+        playingRound: e.rr.playingRound,
         pinned: e.rr.pinned,
       },
       savedAt: Date.now(),
@@ -361,11 +355,8 @@ export function useHost() {
             // restore engine from snapshot
             const s = snap!;
             const rr = createRoundRobin();
-            rr.rotation = s.rr.rotation;
-            rr.currentRound = s.rr.currentRound;
-            rr.servedThisRound = new Set(s.rr.servedThisRound);
-            rr.joinedRound = new Map(s.rr.joinedRound);
             rr.pending = s.rr.pending;
+            rr.playingRound = s.rr.playingRound ?? 0;
             rr.pinned = s.rr.pinned ?? [];
             engineRef.current = {
               code: s.code,

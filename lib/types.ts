@@ -23,6 +23,11 @@ export type QueueItem = Track & {
   addedAt: number;
   /** True when auto-added by the empty-queue radio (decision #10). */
   isRadio?: boolean;
+  /**
+   * Immutable round assigned at add-time (decision #24). Do not recompute — this
+   * is what keeps the queue from reshuffling when new songs arrive.
+   */
+  roundNo?: number;
 };
 
 /** The currently-playing track plus a host-clock anchor for guest interpolation. */

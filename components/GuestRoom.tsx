@@ -6,7 +6,7 @@ import Link from "next/link";
 import {
   Plus,
   MusicNotesSimple,
-  CaretUp,
+  Heart,
   Trash,
   PencilSimple,
   WifiSlash,
@@ -142,11 +142,11 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
       </div>
       {state && state.upNext.length > 0 && (
         <div className="mb-3 flex items-start gap-2 rounded-lg bg-[var(--color-ink-2)] px-3 py-2 text-xs text-[var(--color-muted)]">
-          <CaretUp size={14} weight="bold" className="mt-0.5 shrink-0 text-[var(--color-neon)]" />
+          <Heart size={14} weight="fill" className="mt-0.5 shrink-0 text-[var(--color-neon)]" />
           <span>
-            <span className="font-semibold text-[var(--color-text)]">Upvote</span> a song to move it up
-            in its turn. Everyone&apos;s songs take turns one-per-round, and a person&apos;s most-upvoted
-            pick plays first when their turn comes.
+            Songs play in the order they&apos;re added, but everyone takes turns, one per round, so no
+            one hogs. Tap <Heart size={11} weight="fill" className="inline align-[-1px] text-[var(--color-neon)]" />{" "}
+            to like a song.
           </span>
         </div>
       )}
@@ -221,12 +221,10 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
                         }`}
                         onClick={() => (youVoted ? actions.unvote(q.id) : actions.vote(q.id))}
                         aria-pressed={youVoted}
-                        aria-label={youVoted ? "Remove your upvote" : "Upvote"}
+                        aria-label={youVoted ? "Unlike" : "Like"}
                       >
-                        <CaretUp size={15} weight={youVoted ? "fill" : "bold"} />
-                        <span className="tabular-nums">
-                          {youVoted && q.voterIds.length === 1 ? "Voted" : q.voterIds.length}
-                        </span>
+                        <Heart size={15} weight={youVoted ? "fill" : "regular"} />
+                        <span className="tabular-nums">{q.voterIds.length}</span>
                       </button>
                     )}
                   </div>

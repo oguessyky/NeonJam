@@ -153,7 +153,7 @@ export function HostQueue({ upNext, pinnedIds, onPinNext, onUnpin, onReorderPinn
                     {q.artist} · {q.isRadio ? "radio" : q.addedByName}
                   </p>
                 </div>
-                {q.voters.length > 0 && <span className="chip">▲ {q.voters.length}</span>}
+                {q.voters.length > 0 && <span className="chip">♥ {q.voters.length}</span>}
                 <button
                   className="btn btn-ghost btn-icon !p-1.5 opacity-0 transition group-hover:opacity-100 hover:!text-[var(--color-neon)]"
                   onClick={() => onPinNext(q.id)}

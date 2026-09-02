@@ -109,6 +109,20 @@ synced now-playing + queue on the guest, host reconnect grace confirmed. See REA
 - UI: host queue shows a "Playing next" (pinned, draggable) zone above the "Then (auto)" round-robin
   list; auto rows carry a "↑ play next" control that pins them. Built with the design skill for UX.
 
+### 24. Round-robin rewrite → FIFO-fair, immutable per-song rounds (supersedes votes-in-#9)
+Fixes two reported bugs: order was by contributor-join not FIFO, and adding a song reshuffled
+the already-queued order / could slip into the current round.
+- **Immutable round per song, assigned at add-time** (never recomputed → no reshuffling):
+  - contributor who already has pending songs → new song = their max pending round + 1.
+  - fresh contributor (new or ran out) → the round AFTER the about-to-play round
+    (`min pending round + 1`; if queue empty, `playingRound + 1`; at start, round 1).
+- **Within a round: FIFO** by add-time (decision: song order, not join order).
+- **Newcomers join the round after the imminent one** (strictest choice) — never touch the
+  about-to-play round, never cut ahead of queued songs.
+- **Votes are now just LIKES** — a popularity count only, they do NOT change play order. Reframe
+  the control as a like; play order is purely (round, add-time). Supersedes the vote-ranking in #9.
+- Play order = pinned lane (#23) first, then non-pinned sorted by (round, add-time).
+
 ## Primary user journey (resolved model)
 
 1. **Host** opens NeonJam on a laptop at the speakers → gets a room with a **QR + short code**;
