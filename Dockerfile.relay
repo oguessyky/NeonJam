@@ -1,0 +1,18 @@
+# Relay-only image. The Next.js app is deployed separately (e.g. Vercel).
+# Build:  docker build -f Dockerfile.relay -t neonjam-relay .
+# Run:    docker run -e PORT=3061 -p 3061:3061 neonjam-relay
+FROM node:22-slim
+WORKDIR /app
+
+# Only what the relay needs.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY tsconfig.json ./
+COPY lib ./lib
+COPY relay ./relay
+
+ENV NODE_ENV=production
+# Hosts inject PORT; default for local docker runs.
+EXPOSE 3061
+CMD ["npm", "run", "relay"]

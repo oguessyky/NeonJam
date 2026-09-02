@@ -4,6 +4,7 @@
 // a short host-reconnect grace timer. No queue, no votes, no persistence, no DB.
 // All authoritative state lives in the host browser.
 
+import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { customAlphabet } from "nanoid";
 import {
@@ -13,7 +14,8 @@ import {
 } from "../lib/protocol";
 import { ROOM_CAPACITY, HOST_RECONNECT_GRACE_MS } from "../lib/types";
 
-const PORT = Number(process.env.RELAY_PORT ?? 3061);
+// Hosts like Render/Railway/Fly inject PORT; fall back to RELAY_PORT for local dev.
+const PORT = Number(process.env.PORT ?? process.env.RELAY_PORT ?? 3061);
 
 // Unambiguous room codes (no 0/O/1/I).
 const makeCode = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 4);
@@ -71,10 +73,22 @@ function endRoom(room: Room, notify: boolean) {
 
 // ---------------------------------------------------------------- server
 
-const wss = new WebSocketServer({ port: PORT });
+// A small HTTP server so managed hosts (Render/Railway/Fly) get a 200 health
+// check; WebSocket upgrades share the same port.
+const httpServer = createServer((req, res) => {
+  if (req.url === "/" || req.url === "/health") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, service: "neonjam-relay", rooms: rooms.size }));
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
 
-wss.on("listening", () => {
-  console.log(`NeonJam relay listening on ws://localhost:${PORT}`);
+const wss = new WebSocketServer({ server: httpServer });
+
+httpServer.listen(PORT, () => {
+  console.log(`NeonJam relay listening on port ${PORT}`);
 });
 
 wss.on("connection", (ws) => {

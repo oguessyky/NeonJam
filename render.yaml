@@ -1,0 +1,16 @@
+# Render blueprint for the NeonJam WebSocket RELAY only.
+# The Next.js app deploys separately (e.g. Vercel). See README "Deploying".
+#
+# After this service is live, copy its URL and set on the Next app:
+#   NEXT_PUBLIC_RELAY_URL = wss://<this-service>.onrender.com
+services:
+  - type: web
+    name: neonjam-relay
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm run relay
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

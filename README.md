@@ -54,6 +54,31 @@ separate browser tabs/windows.
 - Relay WebSocket server: port **3061** (override with `RELAY_PORT`)
 - Client relay URL override: `NEXT_PUBLIC_RELAY_URL` (defaults to `ws://<host>:3061`)
 
+## Deploying (IMPORTANT: two hosts)
+
+NeonJam is **two processes**, and the relay is a long-lived WebSocket server.
+**Vercel (and any pure-serverless host) cannot run the relay** — it only builds the
+Next app, so a Vercel-only deploy will connect to nothing and appear broken.
+
+Deploy them separately:
+
+1. **Next.js app → Vercel** (or anywhere). The app + `/api/*` search proxy run fine on
+   serverless.
+2. **Relay → a persistent host** that supports WebSockets and gives you a `wss://` URL:
+   **Render** (blueprint in [`render.yaml`](render.yaml)), **Railway**, **Fly.io**, or any
+   container host ([`Dockerfile.relay`](Dockerfile.relay)). Start command: `npm run relay`.
+   It serves an HTTP `/health` check on the same port.
+3. **Wire them together** — set this env var on the Next app and redeploy:
+
+   ```
+   NEXT_PUBLIC_RELAY_URL = wss://your-relay.onrender.com
+   ```
+
+   (It's a build-time `NEXT_PUBLIC_*` var, so you must redeploy the app after setting it.)
+
+Notes: free relay tiers may cold-start (first join waits a few seconds). The relay binds
+to `PORT` (injected by these hosts) and needs no database or secrets.
+
 ## Layout
 
 | Path | What |
