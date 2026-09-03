@@ -305,7 +305,7 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
       </div>
 
       {/* add FAB + one-tap paste */}
-      <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2">
+      <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 flex items-center gap-4">
         <button
           className="btn btn-primary !rounded-full !px-6 !py-3.5 shadow-2xl"
           onClick={() => openAdd("search")}
