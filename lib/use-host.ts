@@ -73,6 +73,11 @@ export type HostView = {
   /** Live vote-to-skip tally for the current track (connected voters / needed). */
   skipVotes: number;
   skipNeeded: number;
+  /**
+   * Browser blocked autoplay (no user gesture yet) — the first song is loaded but
+   * won't start until the host taps once. Drives a "tap to start" overlay.
+   */
+  needsGesture: boolean;
 };
 
 function newItem(track: Track, addedBy: string): QueueItem {
@@ -115,6 +120,7 @@ export function useHost() {
     guestCount: 0,
     skipVotes: 0,
     skipNeeded: 0,
+    needsGesture: false,
   });
 
   const engineRef = useRef<Engine | null>(null);
@@ -126,6 +132,9 @@ export function useHost() {
   // sits in the ENDED state is a no-op in the YT API, which is why a just-finished
   // song silently refused to replay when re-queued (bug; DESIGN #22 says it must).
   const lastLoadedRef = useRef<string | null>(null);
+  // Detects blocked autoplay: after we try to play a track, if the player hasn't
+  // actually started shortly after, the browser is waiting for a user gesture.
+  const gestureCheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Single entry point for driving the player to a video. Handles the ENDED
   // same-id case by rewinding + playing instead of a dead reload.
@@ -247,6 +256,17 @@ export function useHost() {
         isPlaying: true,
       };
       loadVideo(item.videoId);
+      // If the player isn't actually playing a moment later, autoplay was blocked
+      // (no user gesture yet) → prompt a one-tap start. Once it plays, PLAYING
+      // clears it; after the first tap all later tracks autoplay normally.
+      if (gestureCheckRef.current) clearTimeout(gestureCheckRef.current);
+      gestureCheckRef.current = setTimeout(() => {
+        const p = playerRef.current;
+        if (!p) return;
+        const st = p.getPlayerState();
+        const started = st === YT_STATE.PLAYING || st === YT_STATE.BUFFERING;
+        if (!started) setView((v) => (v.needsGesture ? v : { ...v, needsGesture: true }));
+      }, 1600);
       sync();
     },
     [sync, loadVideo],
@@ -534,6 +554,8 @@ export function useHost() {
               if (d) e2.nowPlaying.durationSec = Math.round(d);
             }
           }
+          // Playback actually started ⇒ dismiss any tap-to-start prompt.
+          setView((v) => (v.needsGesture ? { ...v, needsGesture: false } : v));
           sync();
         } else if (state === YT_STATE.PAUSED) {
           if (e2.nowPlaying) {
@@ -563,6 +585,7 @@ export function useHost() {
     return () => {
       cancelled = true;
       clearInterval(hb);
+      if (gestureCheckRef.current) clearTimeout(gestureCheckRef.current);
       relay.close();
       try {
         playerRef.current?.destroy();
@@ -581,6 +604,12 @@ export function useHost() {
       if (!e?.nowPlaying || !p) return;
       if (e.nowPlaying.isPlaying) p.pauseVideo();
       else p.playVideo();
+    }, []),
+    // The user gesture that satisfies the browser's autoplay policy — kicks off
+    // the loaded track and dismisses the tap-to-start overlay.
+    resume: useCallback(() => {
+      playerRef.current?.playVideo();
+      setView((v) => ({ ...v, needsGesture: false }));
     }, []),
     skip: useCallback(() => {
       void advance();

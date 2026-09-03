@@ -103,6 +103,22 @@ export default function HostPage() {
                   </div>
                 </div>
               )}
+              {np && view.needsGesture && (
+                <button
+                  onClick={controls.resume}
+                  className="absolute inset-0 z-10 grid place-items-center bg-black/60 backdrop-blur-sm cursor-pointer transition"
+                >
+                  <div className="text-center px-6">
+                    <span className="mx-auto mb-3 grid h-16 w-16 place-items-center rounded-full bg-[var(--color-neon)] shadow-2xl">
+                      <Play size={28} weight="fill" className="ml-0.5 text-white" />
+                    </span>
+                    <p className="font-semibold">Tap to start the music</p>
+                    <p className="mt-0.5 text-sm text-[var(--color-faint)]">
+                      Your browser needs one tap before it can play audio
+                    </p>
+                  </div>
+                </button>
+              )}
             </div>
 
             {/* now playing bar */}
