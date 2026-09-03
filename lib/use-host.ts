@@ -36,6 +36,9 @@ type Engine = {
   nowPlaying: NowPlaying | null;
   radioEnabled: boolean;
   locked: boolean;
+  voteSkipEnabled: boolean;
+  /** clientIds who voted to skip the CURRENT track. Reset on every track change. */
+  skipVoters: Set<string>;
 };
 
 type Snapshot = {
@@ -43,6 +46,7 @@ type Snapshot = {
   hostToken: string;
   radioEnabled: boolean;
   locked: boolean;
+  voteSkipEnabled: boolean;
   nowPlaying: NowPlaying | null;
   rr: {
     pending: QueueItem[];
@@ -59,12 +63,16 @@ export type HostView = {
   joinUrl: string;
   locked: boolean;
   radioEnabled: boolean;
+  voteSkipEnabled: boolean;
   members: Member[];
   nowPlaying: NowPlaying | null;
   upNext: ScheduledItem[];
   /** Ordered ids in the "play next" lane (decision #23) — a subset of upNext. */
   pinnedIds: string[];
   guestCount: number;
+  /** Live vote-to-skip tally for the current track (connected voters / needed). */
+  skipVotes: number;
+  skipNeeded: number;
 };
 
 function newItem(track: Track, addedBy: string): QueueItem {
@@ -80,6 +88,18 @@ function newItem(track: Track, addedBy: string): QueueItem {
   };
 }
 
+/**
+ * Vote-to-skip tally (decision #17): majority of CONNECTED guests (host excluded).
+ * Votes from disconnected guests are dropped so the denominator stays honest.
+ */
+function computeSkip(e: Engine): { voterIds: string[]; votes: number; needed: number } {
+  const connected = [...e.members.values()].filter((m) => !m.isHost && m.connected);
+  const connectedIds = new Set(connected.map((m) => m.clientId));
+  const voterIds = [...e.skipVoters].filter((id) => connectedIds.has(id));
+  const needed = connected.length > 0 ? Math.floor(connected.length / 2) + 1 : 0;
+  return { voterIds, votes: voterIds.length, needed };
+}
+
 export function useHost() {
   const [view, setView] = useState<HostView>({
     status: "connecting",
@@ -87,11 +107,14 @@ export function useHost() {
     joinUrl: "",
     locked: false,
     radioEnabled: true,
+    voteSkipEnabled: true,
     members: [],
     nowPlaying: null,
     upNext: [],
     pinnedIds: [],
     guestCount: 0,
+    skipVotes: 0,
+    skipNeeded: 0,
   });
 
   const engineRef = useRef<Engine | null>(null);
@@ -99,6 +122,24 @@ export function useHost() {
   const playerRef = useRef<YTPlayer | null>(null);
   const playerReadyRef = useRef(false);
   const radioLoadingRef = useRef(false);
+  // Last videoId handed to the IFrame player. Loading the SAME id while the player
+  // sits in the ENDED state is a no-op in the YT API, which is why a just-finished
+  // song silently refused to replay when re-queued (bug; DESIGN #22 says it must).
+  const lastLoadedRef = useRef<string | null>(null);
+
+  // Single entry point for driving the player to a video. Handles the ENDED
+  // same-id case by rewinding + playing instead of a dead reload.
+  const loadVideo = useCallback((videoId: string) => {
+    const p = playerRef.current;
+    if (!playerReadyRef.current || !p) return;
+    if (lastLoadedRef.current === videoId) {
+      p.seekTo(0, true);
+      p.playVideo();
+    } else {
+      p.loadVideoById(videoId);
+    }
+    lastLoadedRef.current = videoId;
+  }, []);
 
   // --- snapshot (host resilience #13) --------------------------------------
   const saveSnapshot = useCallback(() => {
@@ -109,6 +150,7 @@ export function useHost() {
       hostToken: e.hostToken,
       radioEnabled: e.radioEnabled,
       locked: e.locked,
+      voteSkipEnabled: e.voteSkipEnabled,
       nowPlaying: e.nowPlaying,
       rr: {
         pending: e.rr.pending,
@@ -127,10 +169,16 @@ export function useHost() {
 
   const buildPublicState = useCallback((): PublicState => {
     const e = engineRef.current!;
+    const skip = computeSkip(e);
     return {
       code: e.code,
       locked: e.locked,
       radioEnabled: e.radioEnabled,
+      voteSkipEnabled: e.voteSkipEnabled,
+      skip:
+        e.voteSkipEnabled && e.nowPlaying
+          ? { voterIds: skip.voterIds, needed: skip.needed }
+          : null,
       members: [...e.members.values()].map((m) => ({
         clientId: m.clientId,
         name: m.name,
@@ -160,17 +208,21 @@ export function useHost() {
   const sync = useCallback(() => {
     const e = engineRef.current;
     if (!e) return;
+    const skip = computeSkip(e);
     setView((v) => ({
       ...v,
       code: e.code,
       joinUrl: typeof window !== "undefined" ? `${window.location.origin}/j/${e.code}` : "",
       locked: e.locked,
       radioEnabled: e.radioEnabled,
+      voteSkipEnabled: e.voteSkipEnabled,
       members: [...e.members.values()],
       nowPlaying: e.nowPlaying,
       upNext: computeSchedule(e.rr, 60),
       pinnedIds: [...e.rr.pinned],
       guestCount: [...e.members.values()].filter((m) => !m.isHost && m.connected).length,
+      skipVotes: e.voteSkipEnabled && e.nowPlaying ? skip.votes : 0,
+      skipNeeded: e.voteSkipEnabled && e.nowPlaying ? skip.needed : 0,
     }));
     saveSnapshot();
     relayRef.current?.send({ t: "host_msg", msg: { kind: "state", state: buildPublicState() } });
@@ -187,18 +239,17 @@ export function useHost() {
   const playTrack = useCallback(
     (item: QueueItem) => {
       const e = engineRef.current!;
+      e.skipVoters = new Set(); // fresh track ⇒ fresh vote-to-skip tally (#17)
       e.nowPlaying = {
         ...item,
         anchorMs: Date.now(),
         positionSec: 0,
         isPlaying: true,
       };
-      if (playerReadyRef.current && playerRef.current) {
-        playerRef.current.loadVideoById(item.videoId);
-      }
+      loadVideo(item.videoId);
       sync();
     },
-    [sync],
+    [sync, loadVideo],
   );
 
   const fillRadio = useCallback(async () => {
@@ -240,6 +291,20 @@ export function useHost() {
       sync();
     }
   }, [fillRadio, playTrack, sync]);
+
+  // If enough CONNECTED guests have voted to skip (majority, host excluded #17),
+  // advance. Called after any skip-vote OR any membership change (a departing
+  // voter/non-voter shifts the ratio). Returns true if it triggered a skip.
+  const maybeAutoSkip = useCallback((): boolean => {
+    const e = engineRef.current;
+    if (!e || !e.voteSkipEnabled || !e.nowPlaying) return false;
+    const { votes, needed } = computeSkip(e);
+    if (needed > 0 && votes >= needed) {
+      void advance();
+      return true;
+    }
+    return false;
+  }, [advance]);
 
   // --- guest intent handling (#8, #11) -------------------------------------
   const handleIntent = useCallback(
@@ -286,6 +351,17 @@ export function useHost() {
           sync();
           return;
         }
+        case "skipvote":
+        case "unskipvote": {
+          // Vote only counts for the track actually playing right now (#17) — a
+          // stale vote for an already-skipped song id is ignored.
+          if (!e.voteSkipEnabled) return;
+          if (!e.nowPlaying || e.nowPlaying.id !== intent.itemId) return;
+          if (intent.kind === "skipvote") e.skipVoters.add(from);
+          else e.skipVoters.delete(from);
+          if (!maybeAutoSkip()) sync(); // auto-skip already re-syncs on advance
+          return;
+        }
         case "remove": {
           const item = e.rr.pending.find((p) => p.id === intent.itemId);
           if (!item) return;
@@ -309,7 +385,7 @@ export function useHost() {
         }
       }
     },
-    [advance, sync, toast],
+    [advance, sync, toast, maybeAutoSkip],
   );
 
   // --- relay wiring --------------------------------------------------------
@@ -348,6 +424,8 @@ export function useHost() {
               nowPlaying: null,
               radioEnabled: true,
               locked: false,
+              voteSkipEnabled: true,
+              skipVoters: new Set(),
             };
             setView((v) => ({ ...v, status: "live" }));
             sync();
@@ -371,12 +449,12 @@ export function useHost() {
               nowPlaying: s.nowPlaying,
               radioEnabled: s.radioEnabled,
               locked: s.locked,
+              voteSkipEnabled: s.voteSkipEnabled ?? true,
+              skipVoters: new Set(), // votes don't survive a host reload
             };
             setView((v) => ({ ...v, status: "live" }));
             // resume playback where we left off
-            if (s.nowPlaying && playerReadyRef.current && playerRef.current) {
-              playerRef.current.loadVideoById(s.nowPlaying.videoId);
-            }
+            if (s.nowPlaying) loadVideo(s.nowPlaying.videoId);
             sync();
             break;
           }
@@ -396,12 +474,14 @@ export function useHost() {
             if (existing) {
               existing.connected = true;
               existing.name = msg.name;
+              if (msg.ip) existing.ip = msg.ip;
             } else {
               e.members.set(msg.clientId, {
                 clientId: msg.clientId,
                 name: msg.name,
                 isHost: false,
                 connected: true,
+                ip: msg.ip,
               });
             }
             sync();
@@ -411,7 +491,8 @@ export function useHost() {
             if (!e) break;
             const m = e.members.get(msg.clientId);
             if (m) m.connected = false; // keep/orphan by default (#21)
-            sync();
+            // A departing guest shifts the vote-to-skip ratio — a skip may now pass.
+            if (!maybeAutoSkip()) sync();
             break;
           }
           case "guest_intent": {
@@ -436,7 +517,7 @@ export function useHost() {
         playerRef.current = p;
         playerReadyRef.current = true;
         const e2 = engineRef.current;
-        if (e2?.nowPlaying) p.loadVideoById(e2.nowPlaying.videoId);
+        if (e2?.nowPlaying) loadVideo(e2.nowPlaying.videoId);
       },
       onStateChange: (state, p) => {
         const e2 = engineRef.current;
@@ -561,6 +642,13 @@ export function useHost() {
       e.radioEnabled = !e.radioEnabled;
       sync();
     }, [sync]),
+    toggleVoteSkip: useCallback(() => {
+      const e = engineRef.current;
+      if (!e) return;
+      e.voteSkipEnabled = !e.voteSkipEnabled;
+      if (!e.voteSkipEnabled) e.skipVoters = new Set(); // drop the tally when off
+      sync();
+    }, [sync]),
     toggleLock: useCallback(() => {
       const e = engineRef.current;
       if (!e) return;
@@ -569,15 +657,18 @@ export function useHost() {
       sync();
     }, [sync]),
     kick: useCallback(
-      (clientId: string) => {
+      // Kick = remove + block rejoin (#18). `alsoIp` additionally blocks their
+      // network (opt-in — the relay warns it may catch other same-WiFi guests).
+      (clientId: string, alsoIp = false) => {
         const e = engineRef.current;
         if (!e) return;
         removeContributor(e.rr, clientId); // purge their songs (#18)
+        e.skipVoters.delete(clientId);
         e.members.delete(clientId);
-        relayRef.current?.send({ t: "host_action", action: { kind: "kick", clientId } });
-        sync();
+        relayRef.current?.send({ t: "host_action", action: { kind: "kick", clientId, alsoIp } });
+        if (!maybeAutoSkip()) sync();
       },
-      [sync],
+      [sync, maybeAutoSkip],
     ),
     dropGuestSongs: useCallback(
       (clientId: string) => {

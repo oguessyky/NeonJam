@@ -4,7 +4,7 @@
 // a short host-reconnect grace timer. No queue, no votes, no persistence, no DB.
 // All authoritative state lives in the host browser.
 
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { customAlphabet } from "nanoid";
 import {
@@ -21,7 +21,7 @@ const PORT = Number(process.env.PORT ?? process.env.RELAY_PORT ?? 3061);
 const makeCode = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 4);
 const makeToken = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 24);
 
-type GuestConn = { ws: WebSocket; name: string };
+type GuestConn = { ws: WebSocket; name: string; ip?: string };
 
 type Room = {
   code: string;
@@ -30,6 +30,16 @@ type Room = {
   hostGraceTimer: NodeJS.Timeout | null;
   guests: Map<string, GuestConn>; // clientId -> conn
   locked: boolean;
+  /**
+   * clientIds that have EVER successfully joined this room. A known device may
+   * rejoin even when the room is locked (fixes mobile-background drop-outs) —
+   * clientId is the identity, not IP. Cleared only by kick/end.
+   */
+  known: Set<string>;
+  /** clientIds blocked from rejoining (kick = remove + ban, decision #18). */
+  banned: Set<string>;
+  /** Optional network-level block (opt-in per kick; may catch same-WiFi guests). */
+  bannedIps: Set<string>;
 };
 
 const rooms = new Map<string, Room>();
@@ -41,6 +51,17 @@ type SockMeta =
   | { role: "pending" };
 const meta = new WeakMap<WebSocket, SockMeta>();
 const alive = new WeakMap<WebSocket, boolean>();
+// Coarse per-socket network address, captured at connect. Used only as a weak
+// moderation signal (opt-in IP ban) + a visibility hint for the host — never as
+// device identity (party guests typically share one WiFi/public IP).
+const ipOf = new WeakMap<WebSocket, string>();
+
+/** Best-effort client IP: first x-forwarded-for hop (proxied hosts) or socket. */
+function clientIp(req: IncomingMessage): string {
+  const xff = req.headers["x-forwarded-for"];
+  const first = Array.isArray(xff) ? xff[0] : xff?.split(",")[0];
+  return (first?.trim() || req.socket.remoteAddress || "").replace(/^::ffff:/, "");
+}
 
 function send(ws: WebSocket, msg: RelayToClient) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -91,9 +112,10 @@ httpServer.listen(PORT, () => {
   console.log(`NeonJam relay listening on port ${PORT}`);
 });
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
   meta.set(ws, { role: "pending" });
   alive.set(ws, true);
+  ipOf.set(ws, clientIp(req));
   ws.on("pong", () => alive.set(ws, true));
 
   ws.on("message", (data) => {
@@ -118,6 +140,9 @@ function handle(ws: WebSocket, msg: ClientToRelay) {
         hostGraceTimer: null,
         guests: new Map(),
         locked: false,
+        known: new Set(),
+        banned: new Set(),
+        bannedIps: new Set(),
       };
       rooms.set(code, room);
       meta.set(ws, { role: "host", code });
@@ -140,7 +165,7 @@ function handle(ws: WebSocket, msg: ClientToRelay) {
       send(ws, { t: "reconnect_ok", code: room.code });
       // Re-tell the host who is currently connected so it can rebuild presence.
       for (const [cid, g] of room.guests) {
-        send(ws, { t: "guest_joined", clientId: cid, name: g.name });
+        send(ws, { t: "guest_joined", clientId: cid, name: g.name, ip: g.ip });
       }
       fanoutGuests(room, { t: "host_status", status: "connected" });
       console.log(`[room ${room.code}] host reconnected`);
@@ -152,19 +177,32 @@ function handle(ws: WebSocket, msg: ClientToRelay) {
       if (!room) return send(ws, { t: "join_fail", reason: "not_found" });
       const name = (msg.name ?? "").trim().slice(0, 32);
       if (!name) return send(ws, { t: "join_fail", reason: "bad_name" });
-      const isReconnect = room.guests.has(msg.clientId);
-      if (!isReconnect) {
+      const ip = ipOf.get(ws) || "";
+
+      // Kicked/banned devices can never rejoin (decision #18) — clientId is the
+      // primary block; opt-in IP block is a coarse secondary net.
+      if (room.banned.has(msg.clientId) || (ip && room.bannedIps.has(ip))) {
+        return send(ws, { t: "join_fail", reason: "banned" });
+      }
+
+      // A "known" device (ever joined this room) may return anytime — including
+      // when the room is locked and after a mobile-background socket drop that
+      // removed it from `guests`. New devices are gated by lock + capacity.
+      const isKnown = room.known.has(msg.clientId);
+      if (!isKnown) {
         if (room.locked) return send(ws, { t: "join_fail", reason: "locked" });
         if (room.guests.size >= ROOM_CAPACITY) {
           return send(ws, { t: "join_fail", reason: "full" });
         }
       }
-      room.guests.set(msg.clientId, { ws, name });
+      const wasConnected = room.guests.has(msg.clientId);
+      room.known.add(msg.clientId);
+      room.guests.set(msg.clientId, { ws, name, ip });
       meta.set(ws, { role: "guest", code: room.code, clientId: msg.clientId });
       send(ws, { t: "join_ok", code: room.code });
       // Host treats a repeat guest_joined for a known clientId as a reconnect.
-      if (room.host) send(room.host, { t: "guest_joined", clientId: msg.clientId, name });
-      console.log(`[room ${room.code}] guest ${isReconnect ? "re" : ""}joined: ${name}`);
+      if (room.host) send(room.host, { t: "guest_joined", clientId: msg.clientId, name, ip });
+      console.log(`[room ${room.code}] guest ${wasConnected ? "re" : ""}joined: ${name}`);
       return;
     }
 
@@ -202,8 +240,13 @@ function handle(ws: WebSocket, msg: ClientToRelay) {
       if (msg.action.kind === "lock") {
         room.locked = msg.action.locked;
       } else if (msg.action.kind === "kick") {
+        // Kick = remove + block rejoin (decision #18). Ban by clientId always;
+        // by IP only when the host opted in.
+        room.banned.add(msg.action.clientId);
+        room.known.delete(msg.action.clientId);
         const g = room.guests.get(msg.action.clientId);
         if (g) {
+          if (msg.action.alsoIp && g.ip) room.bannedIps.add(g.ip);
           send(g.ws, { t: "kicked" });
           try {
             g.ws.close();

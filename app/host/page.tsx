@@ -18,6 +18,7 @@ import {
   UserMinus,
   Copy,
   Check,
+  FastForward,
 } from "@phosphor-icons/react";
 import { useHost } from "@/lib/use-host";
 import { Cover, ProgressBar, formatTime, EqBars } from "@/components/ui";
@@ -146,6 +147,12 @@ export default function HostPage() {
                   <SkipForward size={22} weight="fill" />
                 </button>
               </div>
+
+              {np && view.voteSkipEnabled && view.skipNeeded > 0 && view.skipVotes > 0 && (
+                <p className="mt-2 text-center text-xs text-[var(--color-warn)]">
+                  {view.skipVotes}/{view.skipNeeded} voted to skip
+                </p>
+              )}
             </div>
           </div>
 
@@ -195,6 +202,13 @@ export default function HostPage() {
               onClick={controls.toggleRadio}
             />
             <ToggleRow
+              icon={<FastForward size={18} />}
+              label="Vote to skip"
+              hint="Guests can skip by majority"
+              on={view.voteSkipEnabled}
+              onClick={controls.toggleVoteSkip}
+            />
+            <ToggleRow
               icon={view.locked ? <Lock size={18} /> : <LockOpen size={18} />}
               label="Lock room"
               hint="Stop new guests joining"
@@ -236,17 +250,70 @@ function MemberRow({
   onDrop,
 }: {
   m: Member;
-  onKick: (id: string) => void;
+  onKick: (id: string, alsoIp?: boolean) => void;
   onDrop: (id: string) => void;
 }) {
+  const [confirming, setConfirming] = useState(false);
+
+  if (confirming) {
+    // Kick = remove + block rejoin (#18). Blocking the network (IP) is opt-in
+    // because party guests usually share one WiFi, so it may catch bystanders.
+    return (
+      <div className="flex flex-col gap-2 rounded-lg bg-[var(--color-panel-2)] p-2.5">
+        <p className="text-sm">
+          Remove & block <span className="font-semibold">{m.name}</span>?
+        </p>
+        <p className="text-xs text-[var(--color-faint)]">
+          They can&apos;t rejoin this jam. Their songs are removed.
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            className="btn btn-primary btn-icon !px-3 text-sm"
+            onClick={() => {
+              onKick(m.clientId, false);
+              setConfirming(false);
+            }}
+          >
+            Block
+          </button>
+          {m.ip && (
+            <button
+              className="btn btn-ghost btn-icon !px-3 text-sm !text-[var(--color-warn)]"
+              onClick={() => {
+                onKick(m.clientId, true);
+                setConfirming(false);
+              }}
+              title="Also block their network — may block others on the same Wi‑Fi"
+            >
+              Block + network
+            </button>
+          )}
+          <button
+            className="btn btn-ghost btn-icon !px-3 text-sm ml-auto"
+            onClick={() => setConfirming(false)}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-panel-2)] transition group">
       <div
         className={`w-2 h-2 rounded-full ${m.connected ? "bg-[var(--color-good)]" : "bg-[var(--color-faint)]"}`}
       />
-      <span className={`flex-1 truncate text-sm ${m.connected ? "" : "text-[var(--color-faint)]"}`}>
-        {m.name}
-        {!m.connected && " (away)"}
+      <span className={`min-w-0 flex-1 ${m.connected ? "" : "text-[var(--color-faint)]"}`}>
+        <span className="block truncate text-sm">
+          {m.name}
+          {!m.connected && " (away)"}
+        </span>
+        {m.ip && (
+          <span className="block truncate text-[0.65rem] text-[var(--color-faint)]" title={m.ip}>
+            {m.ip}
+          </span>
+        )}
       </span>
       {!m.connected && (
         <button
@@ -259,8 +326,8 @@ function MemberRow({
       )}
       <button
         className="btn btn-ghost btn-icon opacity-0 group-hover:opacity-100 !text-[var(--color-neon)]"
-        onClick={() => onKick(m.clientId)}
-        title="Kick"
+        onClick={() => setConfirming(true)}
+        title="Remove & block"
       >
         <UserMinus size={16} />
       </button>

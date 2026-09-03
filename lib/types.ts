@@ -46,6 +46,12 @@ export type Member = {
   name: string;
   isHost: boolean;
   connected: boolean;
+  /**
+   * Coarse network address reported by the relay (decision: clientId is the real
+   * identity; IP is a weak visibility hint only). Ephemeral — never persisted to
+   * the host snapshot. Often identical for every guest on the party WiFi.
+   */
+  ip?: string;
 };
 
 /**
@@ -56,10 +62,18 @@ export type PublicState = {
   code: string;
   locked: boolean;
   radioEnabled: boolean;
+  /** Host has vote-to-skip enabled (decision #17). */
+  voteSkipEnabled: boolean;
   members: Array<{ clientId: string; name: string; connected: boolean; isHost: boolean }>;
   nowPlaying: NowPlaying | null;
   /** Round-robin-ordered preview of what plays next (decision #9). */
   upNext: PublicQueueItem[];
+  /**
+   * Live vote-to-skip tally for the current track (decision #17), or null when
+   * nothing is playing / the feature is off. `voterIds` lets a guest derive
+   * whether they've voted; `needed` is the majority threshold of connected guests.
+   */
+  skip: { voterIds: string[]; needed: number } | null;
   /** Server/host epoch (ms) this snapshot was built — lets guests discard stale ones. */
   rev: number;
 };

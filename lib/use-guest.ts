@@ -118,6 +118,14 @@ export function useGuest(code: string, name: string) {
     add: useCallback((track: Track) => sendIntent({ kind: "add", track }), [sendIntent]),
     vote: useCallback((itemId: string) => sendIntent({ kind: "vote", itemId }), [sendIntent]),
     unvote: useCallback((itemId: string) => sendIntent({ kind: "unvote", itemId }), [sendIntent]),
+    skipVote: useCallback(
+      (itemId: string) => sendIntent({ kind: "skipvote", itemId }),
+      [sendIntent],
+    ),
+    unSkipVote: useCallback(
+      (itemId: string) => sendIntent({ kind: "unskipvote", itemId }),
+      [sendIntent],
+    ),
     remove: useCallback((itemId: string) => sendIntent({ kind: "remove", itemId }), [sendIntent]),
     rename: useCallback(
       (newName: string) => {

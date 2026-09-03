@@ -12,6 +12,7 @@ import {
   WifiSlash,
   DoorOpen,
   PushPin,
+  SkipForward,
 } from "@phosphor-icons/react";
 import type { PublicQueueItem } from "@/lib/types";
 import { useGuest } from "@/lib/use-guest";
@@ -23,6 +24,7 @@ const JOIN_ERRORS: Record<string, string> = {
   full: "This room is full.",
   locked: "The host locked the room to new guests.",
   bad_name: "That name didn't work — try another.",
+  banned: "The host removed you from this room.",
 };
 
 export function GuestRoom({ code, name }: { code: string; name: string }) {
@@ -47,6 +49,12 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
   const state = view.state;
   const np = state?.nowPlaying ?? null;
   const pos = np && np.isPlaying ? np.positionSec + (Date.now() - np.anchorMs) / 1000 : np?.positionSec ?? 0;
+
+  // Vote-to-skip (#17): visible only while something's playing and the host has it on.
+  const skip = state?.voteSkipEnabled && np ? state.skip : null;
+  const youSkipped = !!skip?.voterIds.includes(me);
+  const skipVotes = skip?.voterIds.length ?? 0;
+  const skipNeeded = skip?.needed ?? 0;
 
   // Group the queue into "Playing next" (pinned) + per-round sections.
   const sections = groupSections(state?.upNext ?? []);
@@ -132,6 +140,25 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
               <span>{formatTime(np.durationSec)}</span>
             </div>
           </div>
+        )}
+        {skip && (
+          <button
+            className={`mt-3 flex w-full items-center justify-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition ${
+              youSkipped
+                ? "border-[var(--color-warn)] bg-[color-mix(in_srgb,var(--color-warn)_15%,transparent)] text-[var(--color-warn)]"
+                : "border-[var(--color-line)] text-[var(--color-muted)] hover:border-[var(--color-warn)] hover:text-[var(--color-warn)]"
+            }`}
+            onClick={() => (youSkipped ? actions.unSkipVote(np!.id) : actions.skipVote(np!.id))}
+            aria-pressed={youSkipped}
+          >
+            <SkipForward size={15} weight="fill" />
+            {youSkipped ? "Voted to skip" : "Vote to skip"}
+            {skipNeeded > 0 && (
+              <span className="tabular-nums opacity-80">
+                {skipVotes}/{skipNeeded}
+              </span>
+            )}
+          </button>
         )}
       </div>
 

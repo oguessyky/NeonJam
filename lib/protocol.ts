@@ -33,6 +33,11 @@ export const zGuestIntent = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("unvote"), itemId: z.string().max(40) }),
   z.object({ kind: z.literal("remove"), itemId: z.string().max(40) }),
   z.object({ kind: z.literal("rename"), name: zName }),
+  // Vote-to-skip the currently-playing track (decision #17). itemId ties the vote
+  // to a specific now-playing entry so stale votes for an already-skipped song are
+  // ignored by the host.
+  z.object({ kind: z.literal("skipvote"), itemId: z.string().max(40) }),
+  z.object({ kind: z.literal("unskipvote"), itemId: z.string().max(40) }),
 ]);
 export type GuestIntent = z.infer<typeof zGuestIntent>;
 
@@ -47,7 +52,9 @@ export type ClientToRelay =
   | { t: "host_action"; action: HostAction }; // host -> relay (kick/lock/end)
 
 export type HostAction =
-  | { kind: "kick"; clientId: string }
+  // Kick = remove + block rejoin (decision #18). `alsoIp` additionally blocks the
+  // guest's network address (opt-in — may catch others on the same WiFi).
+  | { kind: "kick"; clientId: string; alsoIp?: boolean }
   | { kind: "lock"; locked: boolean }
   | { kind: "end" };
 
@@ -63,9 +70,9 @@ export type RelayToClient =
   | { t: "reconnect_ok"; code: string }
   | { t: "reconnect_fail"; reason: string }
   | { t: "join_ok"; code: string }
-  | { t: "join_fail"; reason: "not_found" | "full" | "locked" | "bad_name" }
+  | { t: "join_fail"; reason: "not_found" | "full" | "locked" | "bad_name" | "banned" }
   // to host:
-  | { t: "guest_joined"; clientId: string; name: string }
+  | { t: "guest_joined"; clientId: string; name: string; ip?: string }
   | { t: "guest_left"; clientId: string }
   | { t: "guest_intent"; from: string; name: string; intent: GuestIntent }
   // to guests:
