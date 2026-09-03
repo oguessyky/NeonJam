@@ -11,20 +11,28 @@ export function AddSong({
   search,
   resolveUrl,
   onAdd,
+  initialMode = "search",
 }: {
   open: boolean;
   onClose: () => void;
   search: (q: string) => Promise<Track[]>;
   resolveUrl: (url: string) => Promise<Track | null>;
   onAdd: (t: Track) => void;
+  /** Which tab to show when the sheet opens (clipboard fallback opens "url"). */
+  initialMode?: "search" | "url";
 }) {
-  const [mode, setMode] = useState<"search" | "url">("search");
+  const [mode, setMode] = useState<"search" | "url">(initialMode);
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Track[]>([]);
   const [loading, setLoading] = useState(false);
   const [added, setAdded] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
   const seq = useRef(0);
+
+  // Honor the requested tab each time the sheet is (re)opened.
+  useEffect(() => {
+    if (open) setMode(initialMode);
+  }, [open, initialMode]);
 
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 60);

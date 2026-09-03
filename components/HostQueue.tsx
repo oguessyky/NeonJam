@@ -12,6 +12,8 @@ type Props = {
   onUnpin: (id: string) => void;
   onReorderPinned: (orderedIds: string[]) => void;
   onRemove: (id: string) => void;
+  /** clientId whose songs to visually highlight (host hovering a guest). */
+  highlightAddedBy?: string | null;
 };
 
 // Group consecutive auto items by their round, preserving order.
@@ -26,7 +28,20 @@ function groupByRound(items: ScheduledItem[]): { round: number; items: Scheduled
   return groups;
 }
 
-export function HostQueue({ upNext, pinnedIds, onPinNext, onUnpin, onReorderPinned, onRemove }: Props) {
+export function HostQueue({
+  upNext,
+  pinnedIds,
+  onPinNext,
+  onUnpin,
+  onReorderPinned,
+  onRemove,
+  highlightAddedBy,
+}: Props) {
+  const isHl = (q: ScheduledItem) => !!highlightAddedBy && q.addedBy === highlightAddedBy;
+  const hlClass = (q: ScheduledItem) =>
+    isHl(q)
+      ? "bg-[color-mix(in_srgb,var(--color-neon-2)_13%,transparent)] shadow-[inset_0_0_0_1.5px_var(--color-neon-2)]"
+      : "";
   const pinnedSet = new Set(pinnedIds);
   const byId = new Map(upNext.map((q) => [q.id, q]));
   const pinned = pinnedIds.map((id) => byId.get(id)).filter(Boolean) as ScheduledItem[];
@@ -98,7 +113,7 @@ export function HostQueue({ upNext, pinnedIds, onPinNext, onUnpin, onReorderPinn
                     dragId === q.id ? "opacity-40" : "opacity-100"
                   } ${isOver && !after ? "shadow-[inset_0_2px_0_var(--color-neon)]" : ""} ${
                     isOver && after ? "shadow-[inset_0_-2px_0_var(--color-neon)]" : ""
-                  }`}
+                  } ${!isOver ? hlClass(q) : ""}`}
                 >
                   <span className="cursor-grab text-[var(--color-faint)] active:cursor-grabbing group-hover:text-[var(--color-muted)]">
                     <DotsSixVertical size={16} weight="bold" />
@@ -144,7 +159,7 @@ export function HostQueue({ upNext, pinnedIds, onPinNext, onUnpin, onReorderPinn
             {group.items.map((q) => (
               <li
                 key={q.id}
-                className="group flex items-center gap-2.5 rounded-lg px-1.5 py-2 transition hover:bg-[var(--color-panel-2)]"
+                className={`group flex items-center gap-2.5 rounded-lg px-1.5 py-2 transition hover:bg-[var(--color-panel-2)] ${hlClass(q)}`}
               >
                 <Cover src={q.cover} alt={q.title} size={38} />
                 <div className="min-w-0 flex-1">

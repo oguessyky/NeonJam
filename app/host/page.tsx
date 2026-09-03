@@ -30,6 +30,8 @@ export default function HostPage() {
   const [qr, setQr] = useState<string>("");
   const [tick, setTick] = useState(0);
   const [copied, setCopied] = useState(false);
+  // clientId of the guest the host is hovering — highlights their songs in the queue.
+  const [hoveredGuest, setHoveredGuest] = useState<string | null>(null);
 
   useEffect(() => {
     if (!view.joinUrl) return;
@@ -164,6 +166,7 @@ export default function HostPage() {
             onUnpin={controls.unpin}
             onReorderPinned={controls.reorderPinned}
             onRemove={controls.removeAny}
+            highlightAddedBy={hoveredGuest}
           />
         </section>
 
@@ -230,7 +233,13 @@ export default function HostPage() {
               {view.members
                 .filter((m) => !m.isHost)
                 .map((m) => (
-                  <MemberRow key={m.clientId} m={m} onKick={controls.kick} onDrop={controls.dropGuestSongs} />
+                  <MemberRow
+                    key={m.clientId}
+                    m={m}
+                    onKick={controls.kick}
+                    onDrop={controls.dropGuestSongs}
+                    onHover={setHoveredGuest}
+                  />
                 ))}
             </div>
           </div>
@@ -248,10 +257,12 @@ function MemberRow({
   m,
   onKick,
   onDrop,
+  onHover,
 }: {
   m: Member;
   onKick: (id: string, alsoIp?: boolean) => void;
   onDrop: (id: string) => void;
+  onHover: (id: string | null) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
 
@@ -300,7 +311,11 @@ function MemberRow({
   }
 
   return (
-    <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-panel-2)] transition group">
+    <div
+      className="flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-panel-2)] transition group"
+      onMouseEnter={() => onHover(m.clientId)}
+      onMouseLeave={() => onHover(null)}
+    >
       <div
         className={`w-2 h-2 rounded-full ${m.connected ? "bg-[var(--color-good)]" : "bg-[var(--color-faint)]"}`}
       />
@@ -315,15 +330,13 @@ function MemberRow({
           </span>
         )}
       </span>
-      {!m.connected && (
-        <button
-          className="btn btn-ghost btn-icon opacity-0 group-hover:opacity-100 text-xs !px-2"
-          onClick={() => onDrop(m.clientId)}
-          title="Drop their songs"
-        >
-          <Trash size={14} />
-        </button>
-      )}
+      <button
+        className="btn btn-ghost btn-icon opacity-0 group-hover:opacity-100 text-xs !px-2"
+        onClick={() => onDrop(m.clientId)}
+        title="Drop their songs"
+      >
+        <Trash size={14} />
+      </button>
       <button
         className="btn btn-ghost btn-icon opacity-0 group-hover:opacity-100 !text-[var(--color-neon)]"
         onClick={() => setConfirming(true)}

@@ -13,6 +13,7 @@ import {
   DoorOpen,
   PushPin,
   SkipForward,
+  ClipboardText,
 } from "@phosphor-icons/react";
 import type { PublicQueueItem } from "@/lib/types";
 import { useGuest } from "@/lib/use-guest";
@@ -30,7 +31,48 @@ const JOIN_ERRORS: Record<string, string> = {
 export function GuestRoom({ code, name }: { code: string; name: string }) {
   const { view, actions, setToastHandler } = useGuest(code, name);
   const [addOpen, setAddOpen] = useState(false);
+  const [addMode, setAddMode] = useState<"search" | "url">("search");
+  const [pasting, setPasting] = useState(false);
   const [, setTick] = useState(0);
+
+  const openAdd = (mode: "search" | "url") => {
+    setAddMode(mode);
+    setAddOpen(true);
+  };
+
+  // One-tap "paste a link & add it" — nicer than the paste-into-a-field flow on
+  // phones. Falls back to opening the Link tab if the browser blocks clipboard
+  // reads (permission denied) or the clipboard isn't a YouTube link.
+  const pasteAndAdd = async () => {
+    if (pasting) return;
+    let text = "";
+    try {
+      text = (await navigator.clipboard.readText()).trim();
+    } catch {
+      openAdd("url");
+      toast("Paste your link in here");
+      return;
+    }
+    const looksLikeLink = /youtu\.?be|youtube\.com|music\.youtube|^[A-Za-z0-9_-]{11}$/i.test(text);
+    if (!text || !looksLikeLink) {
+      openAdd("url");
+      toast(text ? "That didn't look like a YouTube link" : "Clipboard is empty — copy a link first");
+      return;
+    }
+    setPasting(true);
+    try {
+      const t = await actions.resolveUrl(text);
+      if (t) {
+        actions.add(t);
+        toast.success(`Added “${t.title}”`);
+      } else {
+        openAdd("url");
+        toast.error("Couldn't read that link — try pasting it here");
+      }
+    } finally {
+      setPasting(false);
+    }
+  };
 
   useEffect(() => {
     setToastHandler((level, text) => {
@@ -262,13 +304,24 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
         ))}
       </div>
 
-      {/* add FAB */}
-      <button
-        className="btn btn-primary fixed bottom-5 left-1/2 -translate-x-1/2 !rounded-full !px-6 !py-3.5 shadow-2xl z-40"
-        onClick={() => setAddOpen(true)}
-      >
-        <Plus size={20} weight="bold" /> Add a song
-      </button>
+      {/* add FAB + one-tap paste */}
+      <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2">
+        <button
+          className="btn btn-primary !rounded-full !px-6 !py-3.5 shadow-2xl"
+          onClick={() => openAdd("search")}
+        >
+          <Plus size={20} weight="bold" /> Add a song
+        </button>
+        <button
+          className="btn btn-ghost !rounded-full w-12 h-12 !p-0 shadow-2xl bg-[var(--color-panel)]"
+          onClick={pasteAndAdd}
+          disabled={pasting}
+          aria-label="Paste a link and add"
+          title="Paste a link & add"
+        >
+          <ClipboardText size={20} weight="bold" />
+        </button>
+      </div>
 
       <AddSong
         open={addOpen}
@@ -276,6 +329,7 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
         search={actions.search}
         resolveUrl={actions.resolveUrl}
         onAdd={actions.add}
+        initialMode={addMode}
       />
     </main>
   );
