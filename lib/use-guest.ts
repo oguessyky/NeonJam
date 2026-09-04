@@ -39,6 +39,13 @@ export function useGuest(code: string, name: string) {
   });
   const relayRef = useRef<RelayClient | null>(null);
   const toastRef = useRef<((level: string, text: string) => void) | null>(null);
+  // Retry timer for a room that's temporarily gone (relay restart / host reclaiming
+  // its code). We keep re-issuing guest_join until the room returns.
+  const rejoinRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Whether we've ever successfully joined. Distinguishes a room that vanished
+  // mid-session (retry forever) from a wrong/stale code that never existed (which
+  // should stay a clear "room not found" error, not an endless spinner).
+  const joinedOnceRef = useRef(false);
 
   const sendIntent = useCallback((intent: GuestIntent) => {
     relayRef.current?.send({ t: "intent", intent });
@@ -55,11 +62,28 @@ export function useGuest(code: string, name: string) {
       onMessage: (msg) => {
         switch (msg.t) {
           case "join_ok":
+            if (rejoinRef.current) {
+              clearTimeout(rejoinRef.current);
+              rejoinRef.current = null;
+            }
+            joinedOnceRef.current = true;
             setView((v) => ({ ...v, status: "joined" }));
             break;
           case "join_fail":
-            setView((v) => ({ ...v, status: "error", error: msg.reason }));
-            relay.close();
+            if (msg.reason === "not_found" && joinedOnceRef.current) {
+              // The room is momentarily gone — the relay restarted, or the host is
+              // reclaiming its code. Don't give up: stay "reconnecting" and keep
+              // retrying until the host re-establishes the room (then we rejoin).
+              setView((v) => ({ ...v, status: "reconnecting" }));
+              if (rejoinRef.current) clearTimeout(rejoinRef.current);
+              rejoinRef.current = setTimeout(() => {
+                relay.send({ t: "guest_join", code, clientId, name });
+              }, 2000);
+            } else {
+              // banned / locked / full / bad_name are terminal — stop here.
+              setView((v) => ({ ...v, status: "error", error: msg.reason }));
+              relay.close();
+            }
             break;
           case "host_msg":
             if (msg.msg.kind === "state") {
@@ -93,7 +117,10 @@ export function useGuest(code: string, name: string) {
     relayRef.current = relay;
     relay.connect();
 
-    return () => relay.close();
+    return () => {
+      if (rejoinRef.current) clearTimeout(rejoinRef.current);
+      relay.close();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code, name]);
 

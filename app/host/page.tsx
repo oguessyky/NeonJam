@@ -19,6 +19,8 @@ import {
   Copy,
   Check,
   FastForward,
+  Warning,
+  X,
 } from "@phosphor-icons/react";
 import { useHost } from "@/lib/use-host";
 import { Cover, ProgressBar, formatTime, EqBars } from "@/components/ui";
@@ -66,6 +68,28 @@ export default function HostPage() {
 
   return (
     <main className="min-h-screen px-4 sm:px-6 py-6 max-w-6xl mx-auto">
+      {/* Reclaim collision: the connection reset and the room had to move to a NEW
+          code (the old one was taken). Music kept playing, but guests must re-join. */}
+      {view.reclaimedCode && (
+        <div className="mb-4 flex items-start gap-3 rounded-xl border border-[var(--color-warn)] bg-[var(--color-warn)]/10 p-4">
+          <Warning size={22} weight="fill" className="mt-0.5 shrink-0 text-[var(--color-warn)]" />
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-[var(--color-warn)]">Connection reset — new room code</p>
+            <p className="mt-0.5 text-sm text-[var(--color-muted)]">
+              The music kept playing, but your old code was taken. Re-share the new code{" "}
+              <span className="font-bold tracking-widest neon-text">{view.reclaimedCode}</span> so
+              guests can rejoin.
+            </p>
+          </div>
+          <button
+            className="btn btn-ghost btn-icon !px-2 shrink-0"
+            onClick={controls.dismissReclaimNotice}
+            aria-label="Dismiss"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
       {/* header */}
       <header className="flex items-center justify-between mb-6">
         <Link href="/" className="flex items-center gap-2">
