@@ -21,11 +21,22 @@ import {
   FastForward,
   Warning,
   X,
+  Timer,
 } from "@phosphor-icons/react";
 import { useHost } from "@/lib/use-host";
 import { Cover, ProgressBar, formatTime, EqBars } from "@/components/ui";
 import { HostQueue } from "@/components/HostQueue";
 import type { Member } from "@/lib/types";
+
+// Max-song-length ladder in minutes (#D1) — spans short caps up to 3h so a host can
+// deliberately allow a long track. "Off" (no cap) is rendered separately.
+const MAX_SONG_PRESETS = [5, 7, 10, 15, 20, 30, 45, 60, 90, 120, 180];
+
+function formatMinutes(min: number): string {
+  if (min < 60) return `${min} min`;
+  const h = min / 60;
+  return `${Number.isInteger(h) ? h : h.toFixed(1)} hr`;
+}
 
 export default function HostPage() {
   const { view, controls } = useHost();
@@ -34,6 +45,9 @@ export default function HostPage() {
   const [copied, setCopied] = useState(false);
   // clientId of the guest the host is hovering — highlights their songs in the queue.
   const [hoveredGuest, setHoveredGuest] = useState<string | null>(null);
+  // clientId of the adder of the queued song the host is hovering — highlights that
+  // guest in the member list (the mirror of hoveredGuest).
+  const [hoveredSongBy, setHoveredSongBy] = useState<string | null>(null);
 
   useEffect(() => {
     if (!view.joinUrl) return;
@@ -207,6 +221,7 @@ export default function HostPage() {
             onReorderPinned={controls.reorderPinned}
             onRemove={controls.removeAny}
             highlightAddedBy={hoveredGuest}
+            onHoverSong={setHoveredSongBy}
           />
         </section>
 
@@ -258,6 +273,32 @@ export default function HostPage() {
               on={view.locked}
               onClick={controls.toggleLock}
             />
+            <div className="flex items-center gap-3 p-2 rounded-xl">
+              <span className={view.maxSongSec != null ? "text-[var(--color-neon-2)]" : "text-[var(--color-faint)]"}>
+                <Timer size={18} />
+              </span>
+              <span className="flex-1">
+                <span className="block text-sm font-medium">Max song length</span>
+                <span className="block text-xs text-[var(--color-faint)]">
+                  Cap how long added songs can be
+                </span>
+              </span>
+              <select
+                className="rounded-lg border border-[var(--color-line)] bg-[var(--color-ink-2)] px-2 py-1.5 text-sm font-medium"
+                value={view.maxSongSec ?? 0}
+                onChange={(e) => {
+                  const sec = Number(e.target.value);
+                  controls.setMaxSong(sec === 0 ? null : sec);
+                }}
+              >
+                <option value={0}>Off</option>
+                {MAX_SONG_PRESETS.map((min) => (
+                  <option key={min} value={min * 60}>
+                    {formatMinutes(min)}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* members */}
@@ -279,6 +320,7 @@ export default function HostPage() {
                     onKick={controls.kick}
                     onDrop={controls.dropGuestSongs}
                     onHover={setHoveredGuest}
+                    highlighted={hoveredSongBy === m.clientId}
                   />
                 ))}
             </div>
@@ -298,11 +340,14 @@ function MemberRow({
   onKick,
   onDrop,
   onHover,
+  highlighted = false,
 }: {
   m: Member;
   onKick: (id: string, alsoIp?: boolean) => void;
   onDrop: (id: string) => void;
   onHover: (id: string | null) => void;
+  /** Host is hovering one of this guest's queued songs — highlight the row. */
+  highlighted?: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
 
@@ -352,7 +397,11 @@ function MemberRow({
 
   return (
     <div
-      className="flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-panel-2)] transition group"
+      className={`flex items-center gap-2 p-2 rounded-lg transition group ${
+        highlighted
+          ? "bg-[color-mix(in_srgb,var(--color-neon-2)_13%,transparent)] shadow-[inset_0_0_0_1.5px_var(--color-neon-2)]"
+          : "hover:bg-[var(--color-panel-2)]"
+      }`}
       onMouseEnter={() => onHover(m.clientId)}
       onMouseLeave={() => onHover(null)}
     >

@@ -14,6 +14,12 @@ type Props = {
   onRemove: (id: string) => void;
   /** clientId whose songs to visually highlight (host hovering a guest). */
   highlightAddedBy?: string | null;
+  /**
+   * Host hovering a queued song → report its adder's clientId (null for radio, or
+   * on leave) so the member list can highlight who added it. The mirror of
+   * `highlightAddedBy`.
+   */
+  onHoverSong?: (addedBy: string | null) => void;
 };
 
 // Group consecutive auto items by their round, preserving order.
@@ -36,7 +42,16 @@ export function HostQueue({
   onReorderPinned,
   onRemove,
   highlightAddedBy,
+  onHoverSong,
 }: Props) {
+  // Report a song's adder on hover (null for radio — no guest to point at).
+  const hoverProps = (q: ScheduledItem) =>
+    onHoverSong
+      ? {
+          onMouseEnter: () => onHoverSong(q.isRadio ? null : q.addedBy),
+          onMouseLeave: () => onHoverSong(null),
+        }
+      : {};
   const isHl = (q: ScheduledItem) => !!highlightAddedBy && q.addedBy === highlightAddedBy;
   const hlClass = (q: ScheduledItem) =>
     isHl(q)
@@ -94,6 +109,7 @@ export function HostQueue({
                 <li
                   key={q.id}
                   draggable
+                  {...hoverProps(q)}
                   onDragStart={(e) => {
                     setDragId(q.id);
                     e.dataTransfer.effectAllowed = "move";
@@ -159,6 +175,7 @@ export function HostQueue({
             {group.items.map((q) => (
               <li
                 key={q.id}
+                {...hoverProps(q)}
                 className={`group flex items-center gap-2.5 rounded-lg px-1.5 py-2 transition hover:bg-[var(--color-panel-2)] ${hlClass(q)}`}
               >
                 <Cover src={q.cover} alt={q.title} size={38} />

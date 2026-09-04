@@ -42,6 +42,8 @@ type Engine = {
   radioEnabled: boolean;
   locked: boolean;
   voteSkipEnabled: boolean;
+  /** Max playtime (seconds) a guest/radio song may be, or null for no cap (#D1). */
+  maxSongSec: number | null;
   /** clientIds who voted to skip the CURRENT track. Reset on every track change. */
   skipVoters: Set<string>;
 };
@@ -52,6 +54,7 @@ type Snapshot = {
   radioEnabled: boolean;
   locked: boolean;
   voteSkipEnabled: boolean;
+  maxSongSec: number | null;
   nowPlaying: NowPlaying | null;
   rr: {
     pending: QueueItem[];
@@ -69,6 +72,8 @@ export type HostView = {
   locked: boolean;
   radioEnabled: boolean;
   voteSkipEnabled: boolean;
+  /** Max playtime (seconds) a guest/radio song may be, or null for no cap (#D1). */
+  maxSongSec: number | null;
   members: Member[];
   nowPlaying: NowPlaying | null;
   upNext: ScheduledItem[];
@@ -111,8 +116,22 @@ function engineFromSnap(s: Snapshot, code: string, hostToken: string): Engine {
     radioEnabled: s.radioEnabled,
     locked: s.locked,
     voteSkipEnabled: s.voteSkipEnabled ?? true,
+    maxSongSec: s.maxSongSec ?? null,
     skipVoters: new Set(), // votes don't survive a host reload
   };
+}
+
+/**
+ * True when the currently-playing song exceeds the max-length cap and is subject to
+ * it (#D3/#D4): guest- and radio-added songs are capped; host-added (non-radio)
+ * songs bypass. Only meaningful once the real duration is known.
+ */
+function overMaxLength(e: Engine): boolean {
+  const np = e.nowPlaying;
+  if (!np || e.maxSongSec == null || np.durationSec == null) return false;
+  if (np.durationSec <= e.maxSongSec) return false;
+  if (np.addedBy === HOST_ID && !np.isRadio) return false; // host DJ bypass
+  return true;
 }
 
 function newItem(track: Track, addedBy: string): QueueItem {
@@ -148,6 +167,7 @@ export function useHost() {
     locked: false,
     radioEnabled: true,
     voteSkipEnabled: true,
+    maxSongSec: null,
     members: [],
     nowPlaying: null,
     upNext: [],
@@ -199,6 +219,7 @@ export function useHost() {
       radioEnabled: e.radioEnabled,
       locked: e.locked,
       voteSkipEnabled: e.voteSkipEnabled,
+      maxSongSec: e.maxSongSec,
       nowPlaying: e.nowPlaying,
       rr: {
         pending: e.rr.pending,
@@ -223,6 +244,7 @@ export function useHost() {
       locked: e.locked,
       radioEnabled: e.radioEnabled,
       voteSkipEnabled: e.voteSkipEnabled,
+      maxSongSec: e.maxSongSec,
       skip:
         e.voteSkipEnabled && e.nowPlaying
           ? { voterIds: skip.voterIds, needed: skip.needed }
@@ -264,6 +286,7 @@ export function useHost() {
       locked: e.locked,
       radioEnabled: e.radioEnabled,
       voteSkipEnabled: e.voteSkipEnabled,
+      maxSongSec: e.maxSongSec,
       members: [...e.members.values()],
       nowPlaying: e.nowPlaying,
       upNext: computeSchedule(e.rr, 60),
@@ -325,6 +348,8 @@ export function useHost() {
         .filter(Boolean) as Track[];
       for (const t of tracks) {
         if (findByVideoId(e.rr, t.videoId)) continue;
+        // Radio respects the cap (#D4) — don't auto-fill an over-limit mix.
+        if (e.maxSongSec != null && t.durationSec != null && t.durationSec > e.maxSongSec) continue;
         const item = newItem(t, HOST_ID);
         item.isRadio = true;
         addSong(e.rr, item);
@@ -373,6 +398,16 @@ export function useHost() {
         case "add": {
           const track = normalizeTrack(intent.track);
           if (!track) return;
+          // Max-length cap (#D3/#D4): reject guest adds whose KNOWN length exceeds
+          // the cap. Unknown-length tracks pass here and are backstopped at playback.
+          if (
+            e.maxSongSec != null &&
+            track.durationSec != null &&
+            track.durationSec > e.maxSongSec
+          ) {
+            toast(from, "error", `Too long — ${Math.round(e.maxSongSec / 60)} min max`);
+            return;
+          }
           const dup = findByVideoId(e.rr, track.videoId);
           const playingDup = e.nowPlaying?.videoId === track.videoId;
           if (dup) {
@@ -520,6 +555,7 @@ export function useHost() {
               radioEnabled: true,
               locked: false,
               voteSkipEnabled: true,
+              maxSongSec: null,
               skipVoters: new Set(),
             };
             setView((v) => ({ ...v, status: "live" }));
@@ -626,6 +662,15 @@ export function useHost() {
               const d = p.getDuration();
               if (d) e2.nowPlaying.durationSec = Math.round(d);
             }
+            // Max-length backstop (#D3): now that the real duration is known, skip a
+            // guest/radio song that turns out longer than the cap. Host-added songs
+            // bypass (#D4). Advancing re-syncs, so return before the sync below.
+            if (overMaxLength(e2)) {
+              const np = e2.nowPlaying;
+              toast(np.addedBy, "error", `Skipped — over the ${Math.round(e2.maxSongSec! / 60)} min limit`);
+              void advance();
+              return;
+            }
           }
           // Playback actually started ⇒ dismiss any tap-to-start prompt.
           setView((v) => (v.needsGesture ? { ...v, needsGesture: false } : v));
@@ -651,6 +696,18 @@ export function useHost() {
       if (e2?.nowPlaying && playerRef.current && playerReadyRef.current) {
         e2.nowPlaying.positionSec = playerRef.current.getCurrentTime();
         e2.nowPlaying.anchorMs = Date.now();
+        // Catch a length we couldn't read at PLAYING, then apply the cap backstop
+        // (#D3) — covers slow-to-report durations and caps lowered mid-song.
+        if (!e2.nowPlaying.durationSec) {
+          const d = playerRef.current.getDuration();
+          if (d) e2.nowPlaying.durationSec = Math.round(d);
+        }
+        if (overMaxLength(e2)) {
+          const np = e2.nowPlaying;
+          toast(np.addedBy, "error", `Skipped — over the ${Math.round(e2.maxSongSec! / 60)} min limit`);
+          void advance();
+          return;
+        }
       }
       if (engineRef.current) sync();
     }, 5000);
@@ -744,6 +801,16 @@ export function useHost() {
       e.radioEnabled = !e.radioEnabled;
       sync();
     }, [sync]),
+    setMaxSong: useCallback(
+      // Max playtime cap for guest/radio songs (#D1); null = no cap.
+      (sec: number | null) => {
+        const e = engineRef.current;
+        if (!e) return;
+        e.maxSongSec = sec;
+        sync();
+      },
+      [sync],
+    ),
     toggleVoteSkip: useCallback(() => {
       const e = engineRef.current;
       if (!e) return;

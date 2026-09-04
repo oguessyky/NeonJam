@@ -330,6 +330,7 @@ export function GuestRoom({ code, name }: { code: string; name: string }) {
         resolveUrl={actions.resolveUrl}
         onAdd={actions.add}
         initialMode={addMode}
+        maxSongSec={state?.maxSongSec ?? null}
       />
     </main>
   );

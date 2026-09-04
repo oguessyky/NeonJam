@@ -64,6 +64,11 @@ export type PublicState = {
   radioEnabled: boolean;
   /** Host has vote-to-skip enabled (decision #17). */
   voteSkipEnabled: boolean;
+  /**
+   * Max playtime (seconds) a guest-added song may be, or null for no cap. Guests
+   * pre-disable over-limit search results; the host enforces authoritatively.
+   */
+  maxSongSec: number | null;
   members: Array<{ clientId: string; name: string; connected: boolean; isHost: boolean }>;
   nowPlaying: NowPlaying | null;
   /** Round-robin-ordered preview of what plays next (decision #9). */
