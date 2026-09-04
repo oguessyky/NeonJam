@@ -27,6 +27,11 @@ import { createPlayer, YT_STATE, type YTPlayer } from "./yt-iframe";
 
 const SNAP_KEY = "neonjam.host.snapshot";
 const HOST_ID = "host";
+// A cold page-reload can reclaim its room this long after the last save (#13 + the
+// room-follows-host reclaim path). Generous so a host who reopens the tab mid-party
+// gets the same code + queue back; still expires so a snapshot from a long-dead
+// party doesn't resurrect a zombie room.
+const SNAP_TTL_MS = 2 * 60 * 60 * 1000; // ~2h
 
 type Engine = {
   code: string;
@@ -78,7 +83,37 @@ export type HostView = {
    * won't start until the host taps once. Drives a "tap to start" overlay.
    */
   needsGesture: boolean;
+  /**
+   * Set to the NEW room code when a reclaim collided and the room had to move to a
+   * fresh code (the original was taken by another live room). Drives a loud banner
+   * telling the host to re-share it. null on a clean reclaim (code unchanged).
+   */
+  reclaimedCode: string | null;
 };
+
+// Rebuild the authoritative engine from a saved snapshot (used by both the cold
+// page-reload reconnect and the cold reclaim path). `code`/`hostToken` may differ
+// from the snapshot's own when a reclaim collided and got a fresh code.
+function engineFromSnap(s: Snapshot, code: string, hostToken: string): Engine {
+  const rr = createRoundRobin();
+  rr.pending = s.rr.pending;
+  rr.playingRound = s.rr.playingRound ?? 0;
+  rr.lastRound = s.rr.lastRound ?? {};
+  rr.pinned = s.rr.pinned ?? [];
+  return {
+    code,
+    hostToken,
+    rr,
+    members: new Map([
+      [HOST_ID, { clientId: HOST_ID, name: "Host", isHost: true, connected: true }],
+    ]),
+    nowPlaying: s.nowPlaying,
+    radioEnabled: s.radioEnabled,
+    locked: s.locked,
+    voteSkipEnabled: s.voteSkipEnabled ?? true,
+    skipVoters: new Set(), // votes don't survive a host reload
+  };
+}
 
 function newItem(track: Track, addedBy: string): QueueItem {
   return {
@@ -121,6 +156,7 @@ export function useHost() {
     skipVotes: 0,
     skipNeeded: 0,
     needsGesture: false,
+    reclaimedCode: null,
   });
 
   const engineRef = useRef<Engine | null>(null);
@@ -135,6 +171,9 @@ export function useHost() {
   // Detects blocked autoplay: after we try to play a track, if the player hasn't
   // actually started shortly after, the browser is waiting for a user gesture.
   const gestureCheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The code we last asked the relay to reclaim — compared against the granted code
+  // to detect a collision (relay had to move us to a fresh code).
+  const reclaimRequestedRef = useRef<string | null>(null);
 
   // Single entry point for driving the player to a video. Handles the ENDED
   // same-id case by rewinding + playing instead of a dead reload.
@@ -416,7 +455,7 @@ export function useHost() {
       const raw = localStorage.getItem(SNAP_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Snapshot;
-        if (Date.now() - parsed.savedAt < 60_000) snap = parsed;
+        if (Date.now() - parsed.savedAt < SNAP_TTL_MS) snap = parsed;
       }
     } catch {
       /* ignore */
@@ -424,7 +463,15 @@ export function useHost() {
 
     const relay = new RelayClient({
       onOpen: () => {
-        if (snap) {
+        const e = engineRef.current;
+        if (e) {
+          // WARM: the WS dropped and reconnected while the host is still alive and
+          // playing. Reconnect to the LIVE room — not the mount-time snapshot, which
+          // is null for a room created this session (that stale-null path is exactly
+          // what silently minted a new room on every reconnect).
+          relay.send({ t: "host_reconnect", code: e.code, hostToken: e.hostToken });
+        } else if (snap) {
+          // COLD: page reload with a saved snapshot — try to rejoin that room.
           relay.send({ t: "host_reconnect", code: snap.code, hostToken: snap.hostToken });
         } else {
           relay.send({ t: "host_create" });
@@ -434,6 +481,34 @@ export function useHost() {
         const e = engineRef.current;
         switch (msg.t) {
           case "room_created": {
+            const requested = reclaimRequestedRef.current;
+            reclaimRequestedRef.current = null;
+            // A collision reclaim moved us to a fresh code — warn the host to re-share.
+            const movedCode = msg.reclaimed && requested != null && requested !== msg.code;
+
+            if (msg.reclaimed && engineRef.current) {
+              // WARM reclaim: the relay lost the room but our engine + player are
+              // alive. Keep ALL state and the currently-playing song untouched — just
+              // adopt the (possibly new) code + token and re-broadcast so guests
+              // reconverge. Never touch the player here (decision: no interruption).
+              const eng = engineRef.current;
+              eng.code = msg.code;
+              eng.hostToken = msg.hostToken;
+              setView((v) => ({ ...v, status: "live", reclaimedCode: movedCode ? msg.code : null }));
+              sync();
+              break;
+            }
+            if (msg.reclaimed && snap) {
+              // COLD reclaim: room gone AND we have no live engine (page was reloaded
+              // after the snapshot's reconnect grace). Rebuild from the snapshot and
+              // resume playback (player was destroyed, so loadVideo IS correct here).
+              engineRef.current = engineFromSnap(snap, msg.code, msg.hostToken);
+              setView((v) => ({ ...v, status: "live", reclaimedCode: movedCode ? msg.code : null }));
+              if (snap.nowPlaying) loadVideo(snap.nowPlaying.videoId);
+              sync();
+              break;
+            }
+            // FRESH room (first-time create).
             engineRef.current = {
               code: msg.code,
               hostToken: msg.hostToken,
@@ -452,40 +527,38 @@ export function useHost() {
             break;
           }
           case "reconnect_ok": {
-            // restore engine from snapshot
+            if (engineRef.current) {
+              // WARM: WS reconnected while the host stayed alive — the room still
+              // exists and our engine is authoritative. Do NOT rebuild from the
+              // snapshot and do NOT reload the player; just re-broadcast state.
+              setView((v) => ({ ...v, status: "live" }));
+              sync();
+              break;
+            }
+            // COLD: page reload — rebuild the engine from the snapshot and resume.
             const s = snap!;
-            const rr = createRoundRobin();
-            rr.pending = s.rr.pending;
-            rr.playingRound = s.rr.playingRound ?? 0;
-            rr.lastRound = s.rr.lastRound ?? {};
-            rr.pinned = s.rr.pinned ?? [];
-            engineRef.current = {
-              code: s.code,
-              hostToken: s.hostToken,
-              rr,
-              members: new Map([
-                [HOST_ID, { clientId: HOST_ID, name: "Host", isHost: true, connected: true }],
-              ]),
-              nowPlaying: s.nowPlaying,
-              radioEnabled: s.radioEnabled,
-              locked: s.locked,
-              voteSkipEnabled: s.voteSkipEnabled ?? true,
-              skipVoters: new Set(), // votes don't survive a host reload
-            };
+            engineRef.current = engineFromSnap(s, s.code, s.hostToken);
             setView((v) => ({ ...v, status: "live" }));
-            // resume playback where we left off
             if (s.nowPlaying) loadVideo(s.nowPlaying.videoId);
             sync();
             break;
           }
           case "reconnect_fail": {
-            snap = null;
-            try {
-              localStorage.removeItem(SNAP_KEY);
-            } catch {
-              /* ignore */
+            // The relay no longer has the room (restart/sleep wiped it, or it was
+            // unreachable past the grace window). Instead of silently minting a new
+            // random room, RECLAIM our original code so guests reconverge.
+            const eng = engineRef.current;
+            if (eng) {
+              // WARM: host alive with full state — reclaim, keep playing.
+              reclaimRequestedRef.current = eng.code;
+              relay.send({ t: "host_reclaim", code: eng.code, hostToken: eng.hostToken });
+            } else if (snap) {
+              // COLD: reclaim from the snapshot; engine rebuilt on room_created.
+              reclaimRequestedRef.current = snap.code;
+              relay.send({ t: "host_reclaim", code: snap.code, hostToken: snap.hostToken });
+            } else {
+              relay.send({ t: "host_create" });
             }
-            relay.send({ t: "host_create" });
             break;
           }
           case "guest_joined": {
@@ -708,6 +781,9 @@ export function useHost() {
       },
       [sync],
     ),
+    dismissReclaimNotice: useCallback(() => {
+      setView((v) => (v.reclaimedCode ? { ...v, reclaimedCode: null } : v));
+    }, []),
     end: useCallback(() => {
       relayRef.current?.send({ t: "host_action", action: { kind: "end" } });
       try {

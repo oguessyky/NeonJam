@@ -46,6 +46,11 @@ export type GuestIntent = z.infer<typeof zGuestIntent>;
 export type ClientToRelay =
   | { t: "host_create" }
   | { t: "host_reconnect"; code: string; hostToken: string }
+  // Re-establish a room the relay no longer has (relay restart/sleep wiped it) while
+  // the host is still alive with full state. The host asks to keep its ORIGINAL code
+  // + token so guests reconverge on the same code. If that code is taken by another
+  // live room the relay mints a fresh one instead (host detects the change → banner).
+  | { t: "host_reclaim"; code: string; hostToken: string }
   | { t: "guest_join"; code: string; clientId: string; name: string }
   | { t: "intent"; intent: GuestIntent } // guest -> (relay wraps) -> host
   | { t: "host_msg"; to?: string; msg: HostMsg } // host -> (relay fans out) -> guests
@@ -66,7 +71,11 @@ export type HostMsg =
 // ---------- messages the relay SENDS to clients ----------
 
 export type RelayToClient =
-  | { t: "room_created"; code: string; hostToken: string }
+  // `reclaimed` marks a room re-established via host_reclaim (relay restart recovery):
+  // the host must PRESERVE its live engine/player instead of resetting. When the
+  // returned `code` differs from the one requested, the desired code had collided
+  // with another live room and the host got a fresh one (must re-share it).
+  | { t: "room_created"; code: string; hostToken: string; reclaimed?: boolean }
   | { t: "reconnect_ok"; code: string }
   | { t: "reconnect_fail"; reason: string }
   | { t: "join_ok"; code: string }

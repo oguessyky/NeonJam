@@ -151,6 +151,33 @@ function handle(ws: WebSocket, msg: ClientToRelay) {
       return;
     }
 
+    case "host_reclaim": {
+      // The relay lost this room (restart/sleep) but the host is alive with full
+      // authoritative state. Re-create the room under its ORIGINAL code + token so
+      // guests reconverge. If that code is now held by a DIFFERENT live room, never
+      // hijack it — mint a fresh code + token; the host detects the mismatch and
+      // prompts to re-share. (No stored token to verify against — the room is gone.)
+      const collision = rooms.has(msg.code);
+      const code = collision ? newCode() : msg.code;
+      const hostToken = collision ? makeToken() : msg.hostToken;
+      const room: Room = {
+        code,
+        hostToken,
+        host: ws,
+        hostGraceTimer: null,
+        guests: new Map(),
+        locked: false,
+        known: new Set(),
+        banned: new Set(),
+        bannedIps: new Set(),
+      };
+      rooms.set(code, room);
+      meta.set(ws, { role: "host", code });
+      send(ws, { t: "room_created", code, hostToken, reclaimed: true });
+      console.log(`[room ${code}] reclaimed${collision ? ` (collision on ${msg.code} → new code)` : ""}`);
+      return;
+    }
+
     case "host_reconnect": {
       const room = rooms.get(msg.code);
       if (!room || room.hostToken !== msg.hostToken) {
