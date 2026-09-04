@@ -12,6 +12,7 @@ export function AddSong({
   resolveUrl,
   onAdd,
   initialMode = "search",
+  maxSongSec = null,
 }: {
   open: boolean;
   onClose: () => void;
@@ -20,6 +21,8 @@ export function AddSong({
   onAdd: (t: Track) => void;
   /** Which tab to show when the sheet opens (clipboard fallback opens "url"). */
   initialMode?: "search" | "url";
+  /** Host's max song length (seconds), or null for no cap (#D5). */
+  maxSongSec?: number | null;
 }) {
   const [mode, setMode] = useState<"search" | "url">(initialMode);
   const [q, setQ] = useState("");
@@ -142,10 +145,16 @@ export function AddSong({
           {!loading &&
             results.map((t) => {
               const isAdded = added.has(t.videoId);
+              // Pre-empt over-limit adds (#D5): grey out results whose known length
+              // exceeds the host's cap. The host also rejects authoritatively.
+              const tooLong =
+                maxSongSec != null && t.durationSec != null && t.durationSec > maxSongSec;
               return (
                 <div
                   key={t.videoId}
-                  className="flex items-center gap-3 p-2 rounded-xl hover:bg-[var(--color-panel-2)] transition"
+                  className={`flex items-center gap-3 p-2 rounded-xl transition ${
+                    tooLong ? "opacity-45" : "hover:bg-[var(--color-panel-2)]"
+                  }`}
                 >
                   <Cover src={t.cover} alt={t.title} size={44} />
                   <div className="min-w-0 flex-1">
@@ -153,12 +162,15 @@ export function AddSong({
                     <p className="truncate text-xs text-[var(--color-faint)]">
                       {t.artist}
                       {t.durationSec ? ` · ${formatTime(t.durationSec)}` : ""}
+                      {tooLong && ` · over ${Math.round(maxSongSec! / 60)} min limit`}
                     </p>
                   </div>
                   <button
                     className={`btn btn-icon shrink-0 ${isAdded ? "btn-ghost" : "btn-primary"}`}
                     onClick={() => doAdd(t)}
-                    aria-label="Add"
+                    disabled={tooLong}
+                    aria-label={tooLong ? "Too long to add" : "Add"}
+                    title={tooLong ? `Over the ${Math.round(maxSongSec! / 60)} min limit` : undefined}
                   >
                     <Plus size={18} weight="bold" />
                   </button>
