@@ -1,11 +1,55 @@
-# NeonJam 🎶
+<div align="center">
 
-A **party jukebox for YouTube Music**. One screen (a laptop at the speakers) plays;
-everyone else queues, votes, and controls it from their phone. **Nothing is
-downloaded or stored** — playback is YouTube's own embedded player, and the server
-is a dumb relay that keeps no state.
+# 🎶 NeonJam
 
-See [DESIGN.md](DESIGN.md) for the full decision record (22 resolved decisions).
+**A collaborative party jukebox for YouTube Music.**
+
+One laptop at the speakers plays. Everyone else joins from their phone to search, queue,
+like, and vote-to-skip — no app, no accounts, and **nothing downloaded or stored**.
+
+![Version](https://img.shields.io/badge/version-1.0.0-ff2ea0)
+![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee)
+![Next.js 16](https://img.shields.io/badge/Next.js-16-black)
+![React 19](https://img.shields.io/badge/React-19-61dafb)
+
+![NeonJam host screen and guest phone](docs/screenshots/hero.png)
+
+</div>
+
+## What it is
+
+NeonJam turns any party into a shared queue. The **host** opens a room on a desktop
+browser and gets a room code + QR. **Guests** scan it, pick a name, and add songs from
+YouTube Music search or a pasted link. Songs play **round-robin** — everyone gets one
+turn per round, so nobody hogs the aux — and likes rank songs within a turn.
+
+Playback is YouTube's own embedded player, and the backend is just a stateless search
+proxy plus a dumb WebSocket relay. No database, no media files, no persistence.
+
+See [DESIGN.md](DESIGN.md) for the full decision record (22 resolved decisions) and
+[CHANGELOG.md](CHANGELOG.md) for release notes.
+
+## Screenshots
+
+| Host (desktop, at the speakers) | Guest remote | Adding a song |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/host.png" width="480" alt="Host room with now playing, QR code and settings"> | <img src="docs/screenshots/guest.png" width="220" alt="Guest phone view with queue and likes"> | <img src="docs/screenshots/guest-search.png" width="220" alt="Guest search sheet"> |
+
+<p align="center"><img src="docs/screenshots/landing.png" width="640" alt="Landing page: host or join a room"></p>
+
+## Features (v1.0.0)
+
+- 📱 **Join by QR or 4-character code** — no accounts, no install; just a name.
+- 🔎 **Search YouTube Music** or **paste a link** (one-tap paste-to-add from the clipboard).
+- 🔁 **Fair round-robin queue** — one song per person per round; likes rank within a turn.
+- ❤️ **Likes** and 🗳️ **vote-to-skip** by majority (host toggle).
+- 🎛️ **Host DJ controls** — play/pause/skip, play-next lane with drag-to-reorder, remove,
+  kick, lock the room, and an optional **max song length** cap.
+- 📻 **Autoplay radio** keeps the music going when the queue empties.
+- 👀 Hover a song to see **who added it**; hover a guest to highlight their songs.
+- 🔌 **Resilient** — host and guests reconnect after a refresh; the host reclaims its room
+  if the relay restarts.
+- 🚫 **Stores nothing** — no database, no downloads, no media bytes.
 
 ## How it works
 
@@ -99,3 +143,7 @@ to `PORT` (injected by these hosts) and needs no database or secrets.
 - Search uses YouTube's **unofficial** InnerTube API (via `youtubei.js`); it can break
   if Google changes it — the URL-paste path is the fallback.
 - A room is **ephemeral**: it ends if the host truly leaves (a ~60s refresh grace aside).
+
+## License
+
+[MIT](LICENSE)
